@@ -1,0 +1,984 @@
+---
+title: "Environmental filtering drives assembly of diatom communities over evolutionary timescales"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+chunk_output_type: console
+---
+
+<br>
+
+Elena Jovanovska^c^, Torsten Hauffe,
+
+<br>
+^c^ Corresponding Author: jovanovska.eci@gmail.com
+
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache=TRUE, autodep = TRUE)
+knitr::dep_auto()
+```
+
+<br>
+
+## Abstract
+
+<br>
+
+#### Aim
+
+Ecological communities are structured through the interplay of deterministic assembly processes such as species competition and environmental filtering. Whereas the drivers of spatial community structures are frequently studied in extant communities, little is known about the relative importance of deterministic assembly processes in response to environmental factors over evolutionary timescales. Here, we use an integrative framework to unravel drivers and dynamics of community assembly processes since the inception of a long-lived lake ecosystem. 
+
+<br>
+
+#### Location
+
+Lake Ohrid, Balkans.
+
+<br>
+
+#### Time period
+
+From lake formation 1.36 million years ago to the present. 
+
+<br>
+
+#### Major taxa studied
+
+Planktonic diatoms. 
+
+<br>
+
+#### Methods
+
+We constructed a dated molecular phylogeny of extant and extinct planktonic diatoms and collected trait data for 380 fossil communities to quantify phylogenetic community and functional structures and to determine the relative importance of deterministic assembly processes over time. We then used generalized additive regression models to correlate the phylogenetic community structure with climatic and environmental variables and to identify primary drivers of assembly processes.
+
+<br>
+
+#### Results
+
+Our results suggest denser packing of niche space with higher species richness and co-occurrence of phylogenetically closely related species, with only two short episodes dominated by distantly related taxa. We found support for additional distinct changes in phylogenetic community structure upon speciation or (local)extinction events and a decrease in mean community relatedness with decreased vegetation cover and a lower precipitation/evaporation ratio during glacial periods.
+
+<br>
+
+#### Main conclusions
+
+Our finding implies filtering as the primary assembly mechanism and a minor importance of competition. The relative importance of these assembly processes was mainly influenced by evolutionary dynamics related to changes in trait distribution of the assemblage and species diversification or population growth, whereas recent glacial periods slightly intensified competition. This study challenges the predictions from ecological theories that competition intensifies as insular ecosystems age. 
+
+<br>
+
+With this html document all steps of the statistical analysis performed in the manuscript are reproduced.
+
+### Load packages and custom functions
+
+```{r PkgData, cache = FALSE, echo = TRUE, message = FALSE, warning = FALSE}
+library(ape)
+library(geiger)
+library(picante)
+library(cluster)
+library(FD)
+library(ecp)
+library(brms)
+# install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+library(cmdstanr)
+# install_cmdstan(overwrite = TRUE, cores = 1) # Only once to configure
+library(ggmcmc)
+library(spdep)
+library(pgirmess)
+# library(remotes)
+# remotes:::install_github("matthias-da/robCompositions")
+library(robCompositions)
+library(palinsol)
+library(foreach)
+library(doParallel)
+library(viridis)
+library(broom)
+
+source("AuxiliaryFunctions.R")
+
+Comm <- read.table("OhridCyclotellaCommunity.txt", sep = "\t", header = TRUE)
+Tree <- read.tree("OhridCyclotella.tree")
+Traits <- read.table("OhridCyclotellaTraits.txt", row.names = 1,
+                     sep = "\t", header = TRUE, stringsAsFactors = TRUE)
+EntireComm <- read.table("OhridEntireCommunity.txt",
+                        sep = "\t", header = TRUE, check.names = FALSE)
+LR04 <- read.table("LR04_boundaries.txt",
+                   sep = "\t", header = TRUE, check.names = FALSE)
+Grainsize <- read.table("Grainsize.txt",
+                        sep = "\t", header = TRUE, check.names = FALSE)
+Pollen <- read.table("Pollen.txt", sep = "\t", header = TRUE)
+CaK <- read.table("CaK.txt", sep = "\t", header = TRUE)
+Isotope <- read.table("Isotope.txt", sep = "\t", header = TRUE)
+TicToc <- read.table("TicToc.txt", sep = "\t", header = TRUE)
+Quartz <- read.table("Quartz.txt", sep = "\t", header = TRUE)
+LR04Values <- read.table("LR04stack.txt", header = TRUE, skip = 4, sep = "\t")
+Gast <- read.table("GAST.txt", header = TRUE, sep = "\t", check.names = FALSE)
+Medstack <- read.table("MEDSTACK_Wang2010.txt", sep = "\t", header = TRUE)
+```
+
+
+## 2.4 Assessing trait evolution and deterministic assembly processes
+
+To infer the relative importance of species competition and environmental filtering, we assessed the phylogenetic structure of diatom communities (i.e. whether closely related species co-occur) and evaluated whether closely related species share similar traits (i.e. a high phylogenetic signal). Trait evolution in *Cyclotella* s.l. species was assessed via quantifying the phylogenetic signal using Pagel’s $\lambda$ (Pagel, 1999), showing whether the shared phylogenetic history has driven trait distribution of taxa (i.e. $\lambda \approx 1$) and closely related species have similar trait values or whether traits diverge so rapidly that the signal of phylogenetic history is concealed (i.e. $\lambda \approx 0$).  Four continuous and nine categorical traits, representing morphological and ecological characteristics of taxonomic and/or functional importance, were scored (Figure 3b, Supporting Information Table S5). Utilizing the Akaike information criterion (AIC) to compare the fit (i.e. $\Delta$AIC) between models of trait evolution with $\lambda$‑transformed branch lengths versus models with untransformed branches provided the statistical support for the phylogenetic signal. Brownian motion models for continuous traits and Markov models with equal transition rates for the categorical traits were fitted using the R package GEIGER 2.0.6 (Harmon et al., 2008).
+
+```{r PhyloSignal, cache = TRUE, warning = FALSE}
+SeqTraits <- seq(1, 8, by = 2)
+SeqSe <- seq(2, 8, by = 2)
+
+TreeResolved <- multi2di(Tree)
+ContTraits <- as.data.frame(matrix(NA, nr = length(SeqTraits), nc = 7))
+rownames(ContTraits) <- colnames(Traits)[SeqTraits]
+colnames(ContTraits) <- c("sig2", "loglik", "AIC_BM",
+                          "sig2", "Lambda", "loglik", "AIC_Lambda")
+for (i in 1:length(SeqTraits)) {
+  X <- Traits[, SeqTraits[i]]
+  names(X) <- row.names(Traits) 
+  SE <- Traits[, SeqSe[i]]
+  names(SE) <- row.names(Traits) 
+  NaX <- is.na(X)
+  if (any(NaX)) { 
+    # Drop species if no trait
+    X <- X[-which(NaX)]
+    SE <- SE[-which(NaX)]
+    TreeResolved2 <- drop.tip(TreeResolved, names(which(NaX)))
+  }
+  else {
+    TreeResolved2 <- TreeResolved
+  }
+  Fit <- fitContinuous(phy = TreeResolved2, dat = X, SE = SE/sqrt(2),
+                       model = "BM")
+  ContTraits[i, 1] <- Fit$opt$`sigsq`
+  ContTraits[i, 2] <- Fit$opt$lnL
+  ContTraits[i, 3] <- Fit$opt$aic
+  Fit <- fitContinuous(phy = TreeResolved2, dat = X, SE = SE/sqrt(2),
+                       model = "lambda")
+  ContTraits[i, 4] <- Fit$opt$`sigsq`
+  ContTraits[i, 5] <- Fit$opt$lambda
+  ContTraits[i, 6] <- Fit$opt$lnL
+  ContTraits[i, 7] <- Fit$opt$aic
+}
+
+ContTraits$DeltaAIC <- ContTraits$AIC_BM - ContTraits$AIC_Lambda
+ContTraits$Interpretation <- c("WPS", "NPS", "NPS", "NPS")
+
+
+CatTraits <- as.data.frame(matrix(NA, nrow = 9, ncol = 9))
+colnames(CatTraits) <- c("q", "loglik", "AIC_MK",
+                         "q", "Lambda", "loglik", "AIC_Lambda",
+                         "DeltaAIC", "Interpretation")
+rownames(CatTraits) <- colnames(Traits)[9:17]
+for (i in 1:9) {
+  X <- Traits[, 8 + i]
+  names(X) <- row.names(Traits)
+  NaX <- is.na(X)
+  if (any(NaX)) { 
+    X <- X[-which(NaX)]
+    TreeResolved2 <- drop.tip(TreeResolved, names(which(NaX)))
+  }
+  else {
+    TreeResolved2 <- TreeResolved
+  }
+  Model <- "ER"
+  if (i == 7) {
+    Model <- "meristic"
+  }
+  FitMK <- fitDiscrete(phy = TreeResolved2,
+                       dat = X, model = Model)
+  FitLambda <- fitDiscrete(phy = TreeResolved2,
+                           dat = X, model = Model,
+                           transform = "lambda")
+  if (i == 7) {
+    Q <- unlist(FitMK$opt[c("q12" , "q23", "q34")])
+    CatTraits[i, 1] <- paste(round(Q, 3), collapse = ",")
+    Q <- unlist(FitMK$opt[c("q12" , "q23", "q34")])
+    CatTraits[i, 4] <- paste(round(Q, 3), collapse = ",")
+  }
+  else {
+    CatTraits[i, 1] <- round(FitMK$opt$`q12`, 3)
+    CatTraits[i, 4] <- round(FitLambda$opt$`q12`, 3)
+  }
+  CatTraits[i, 2] <- FitMK$opt$lnL
+  CatTraits[i, 3] <- FitMK$opt$aic
+  CatTraits[i, 5] <- FitLambda$opt$lambda
+  CatTraits[i, 6] <- FitLambda$opt$lnL
+  CatTraits[i, 7] <- FitLambda$opt$aic
+}
+CatTraits$DeltaAIC <- CatTraits$AIC_MK - CatTraits$AIC_Lambda
+CatTraits$Interpretation <- c("PS", "PS", "PS", "PS", "PS",
+                              "WPS", "WPS", "WPS", "WPS")
+```
+
+**TABLE 1** Phylogenetic signal in different ecological and morphological traits. Phylogenetic signal (Pagel’s $\lambda$) is the length transformation of phylogenetic branches with $\lambda = 1$ indicating no transformation and that all trait divergence occurs during anagenesis, whereas $\lambda = 0$ points to trait divergence only at speciation events. ΔAIC expresses the difference in fit between models of trait evolution without and with branch length transformation. NPS = no phylogenetic signal, WPS = weak phylogenetic signal, MPS = medium phylogenetic signal, PS = phylogenetic signal.
+
+$\sigma^2$: rate of continuous trait evolution q: transition rate between categorical traits
+
+```{r}
+kable(ContTraits, row.names = TRUE, align = "l",
+      digits = c(3, 2, 2, 3, 2, 2, 2, 2, NA))
+kable(CatTraits, row.names = TRUE, align = "l",
+      digits = c(NA, 2, 2, NA, 2, 2, 2, 2, NA))
+```
+
+<br>
+
+```{r ModifyComm, cache = TRUE, warning = FALSE}
+# Reorder from past to present
+Comm <- Comm[nrow(Comm):1, ]
+# Extant endemics
+Comm$Cyclotella_bifacialis[Comm$Cyclotella_bifacialis == 0 & Comm$Age > -621.20705] <- 1 
+Comm$Cyclotella_fottii[Comm$Cyclotella_fottii == 0] <- 1
+Comm$Lindavia_thienemannii[Comm$Lindavia_thienemannii == 0 & Comm$Age > -122.93015] <- 1 
+
+# Endemic species but today absent i.e. endemic fossils
+EndAbs <- c("Cribrionella_ohridana", "Cyclotella_cavitata", "Cyclotella_sollevata", 
+            "Pantocsekiella_multiocellata", "Pantocsekiella_preocellata")
+for(i in 1:length(EndAbs)){
+  Tmp <- Comm[, EndAbs[i]]
+  R <- range(which(Tmp > 0))
+  Tmp[ which(Tmp[R[1]:R[2]] == 0) + R[1]-1 ] <- 1
+  Comm[, EndAbs[i]] <- Tmp
+}
+```
+
+
+```{r Figure3, cache = TRUE, warning = FALSE, fig.width = 10}
+TreeTmp <- Tree
+TipColor <- rep("black", 17)
+TipColor[Tree$tip.label %in% c("Cyclotella_cavitata",
+                               "Pantocsekiella_multiocellata",
+                               "Cyclotella_sollevata",
+                               "Pantocsekiella_preocellata",
+                               "Cribrionella_ohridana")] <- "turquoise"
+TipLabels <- strsplit(Tree$tip.label, "_")
+TreeTmp$tip.label <- unlist(lapply(TipLabels,
+                                   function(x) paste0(substring(x[1], 1, 1), "._", x[2])))
+TraitsPlot <- Traits[pmatch(Tree$tip.label, row.names(Traits)), ]
+
+layout(matrix(1:4, nrow = 1, ncol = 4), widths = c(0.24, 0.32, 0.39, 0.05))
+par(las = 1, mar = c(5.1, 1, 0.5, 0), lwd = 0.5)
+plot(TreeTmp, show.tip.label = TRUE, cex = 0.8,
+     tip.color = TipColor)
+axisPhylo()
+mtext(text = "(a)", side = 2, line = -1,
+      at = par("usr")[4] - diff(par("usr")[3:4]) * 0.02,
+      font = 2, cex = 1.2)
+
+par(las = 1, mar = c(5.1, 0.5, 0.5, 0), lwd = 0.5)
+plot(1, 1, type = "n", xlim = c(0, 25), ylim = c(1, 17), 
+     axes = FALSE, xlab = "", ylab = "")
+axis(side = 1, at = 1:13)
+mtext(text = "Traits", side = 1, line = 2.8, at = 7, cex = 0.7)
+mtext(text = "(b)", side = 2, line = -1,
+      at = par("usr")[4] - diff(par("usr")[3:4]) * 0.02,
+      font = 2, cex = 1.2)
+CexPoints <- 1.2
+for (i in 1:4) {
+  # Standardize trait [0,1]
+  StandTrait <- (TraitsPlot[, SeqTraits[i]] - min(TraitsPlot[, SeqTraits[i]], na.rm = TRUE)) /
+    (max(TraitsPlot[, SeqTraits[i]], na.rm = TRUE) - min(TraitsPlot[, SeqTraits[i]], na.rm = TRUE))
+  points(rep(i, 17),
+         1:17, pch = 19, 
+         cex = CexPoints * (0.1 + StandTrait)^2, col = "grey60")
+}
+for (i in 1:9) {
+  points(rep(4 + i, 17),
+         1:17, pch = as.numeric(as.factor(TraitsPlot[, 8 + i])) + 14, 
+         cex = CexPoints, col = "grey40") 
+}
+legend(14, 17,
+       legend = paste(1:13, colnames(TraitsPlot)[-c(SeqSe)]), 
+       cex = 0.7, text.col = c(rep("grey60", 4), rep("grey40", 9)))
+
+par(las = 1, mar = c(5.1, 1, 0.5, 0), lwd = 0.5)
+IsTip <- Tree$edge[,2] <= length(Tree$tip.label)
+OrderedTips <- Tree$edge[IsTip, 2]
+ColGrad <- viridis(100)
+plot(1, 1, xlim = range(Comm$Age), ylim = c(0, 1), 
+     type = "n", bty = "n", xaxt = "n", yaxt = "n", ylab = "", xlab = "Age (Ma)")
+mtext(text = "(c)", side = 2, line = -1,
+      at = par("usr")[4] - diff(par("usr")[3:4]) * 0.02,
+      font = 2, cex = 1.2)
+for(i in 1:nrow(LR04)){
+  if( -LR04[i,2] > min(Comm$Age) & (LR04[i,1] %% 2 == 1) ){
+    rect(xleft = -LR04[i,2], ybottom = par("usr")[3], 
+         xright = -LR04[i-1,2], ytop = par("usr")[4], 
+         border = NA, col = adjustcolor("grey", alpha.f = 0.1))
+  }
+}
+Div <- rowSums(Comm[,-c(1:3)])
+Seq <- seq(0, 1, length.out = 100)
+Y <- seq(0, 1, length.out = 17) # Height on y-axis
+for (i in 1:(ncol(Comm)-3)) {
+  Sp <- Comm[, Tree$tip.label[OrderedTips][i]]
+  Sp <- Sp/Div
+  W <- which(Sp > 0)
+  ColTmp <- ColGrad[sapply(Sp, function(x) sum( Seq < x) )]  
+  points(x = Comm$Age[W], y = rep(Y[i], length(W)), 
+         pch = 19, cex = 0.2, col = ColTmp)
+}
+axis(side = 1, at = seq(-1400, 0, 200),
+     labels = rev(c("0.0", "0.2", "0.4", "0.6", "0.8", "1.0", "1.2", "1.4")))
+
+par(mar = c(5.1, 0.1, 0.5, 0.1))
+plot(1, 1, type = "n", axes = FALSE, xlab = "", ylab = "", xlim = c(-0.2, 5), 
+     ylim = c(-100, 100))
+rasterImage(as.raster( matrix(rev(ColGrad), nrow = length(ColGrad), ncol = 1) ), 
+            xleft = 1, xright = 2, ybottom = 0, ytop = 100,     
+            interpolate = FALSE)
+text(x = 0, y = 50, labels = "relative abundances (%)", srt = 90)
+rect(xleft = 1, xright = 2, ybottom = 0, ytop = 100, lwd = 1)
+segments(x0 = 2, y0 = 0, x1 = 2.2, y1 = 0, lwd = 1) 
+text(x = 2.5, y = 0, labels = "0", adj = 0)
+segments(x0 = 2, y0 = 50, x1 = 2.2, y1 = 50, lwd = 1) 
+text(x = 2.5, y = 50, labels = "50", adj = 0)
+segments(x0 = 2, y0 = 100, x1 = 2.2, y1 = 100, lwd = 1) 
+text(x = 2.5, y = 100, labels = "100", adj = 0)
+```
+
+**FIGURE 3** Trait evolution and abundancies of Lake Ohrid *Cyclotella* sensu lato species over time. (a) Dated phylogeny including extinct endemic species from Lake Ohrid (for details see Figure 1). (b) Light-grey symbols show trait expression with circle size proportional to the values of continuous traits and dark-grey symbols (i.e. triangle, square, and circle) the states of categorical traits. (c) Colored dots represent relative abundances of *Cyclotella* s.l. species found in DEEP-5045-1 sediment record; vertical grey and white bars indicate glacial and interglacial periods, respectively. 
+
+<br>
+
+The phylogenetic structure for each of the 380 diatom communities sampled at different time points in the past was quantified by calculating the MPD between species of a community along the dated phylogeny. A null model of random phylogenetic community structure assuming even species richness was compared to the observed communities to quantify the standard effect size (SES) of the observed MPD. This measure evaluates whether a species community is a result of phylogenetic clustering (values < 0) or overdispersion (values > 0), reflecting the presence of either more closely or more distantly related species within the community than expected by the null model. For each time point, the null model involves shuffling of species identities 999 times across the tips of the phylogeny with probabilities proportional to their abundancies in the previous time step. Standard null models of shuffling abundances in the community matrix may not be appropriate here, because they do not yet consider the time structure of the data. Branch lengths were pruned to the age of the assemblage and the pairwise phylogenetic distance was weighted by the relative abundance of the respective species pair to infer the evolutionary dynamics across the study period. The MPD was quantified with the R package picante 1.6.2 (Kembel et al., 2010).
+
+```{r PhyloStructure, cache = TRUE, warning = FALSE, eval = TRUE}
+CophTree <- cophenetic(Tree)
+SesMpd <- getSesMpd(Comm, CophTree, Runs = 999, Ncores = 28)
+```
+
+
+<br>
+
+## 2.5 Assessing morphospace occupation patterns
+
+To test whether niche space expands in a given assemblage and is more packed with higher species richness, we estimated functional richness over time and the correlation between functional richness and species richness. We quantified the functional richness index FRic (Villéger et al., 2008) based on all 13 traits for the same 380 communities, using the R package FD 1.0-12 (Laliberté et al., 2014). The actual values of FRic were compared to a null model of a random expectation, resulting in the standardized effect size (SES.FRic), which allowed us to determine whether the phylogenetic community structure and species richness was associated to small (< 0) or large (> 0) occupancy of niche space.
+
+```{r FuncRichness, cache = TRUE, warning = FALSE, eval = TRUE}
+TraitsScaled <- data.frame(scale(Traits[, SeqTraits]), Traits[, 9:17])
+SesFric <- getSesFric(Comm[, -c(1:3)], TraitsScaled, Runs = 999, Ncores = 28)
+```
+
+<br>
+
+To evaluate the effect of taxon sampling on the species richness trajectory, we performed a rarefaction analysis. We randomly sampled 100 individuals from the entire diatom assemblage at a moment in time (extracted from Wilke et al. 2020), determined the number of *Cyclotella* s.l. species and repeated the random subsampling 1000 times to calculate the mean richness and its variability over time.
+
+```{r Rarefaction, cache = TRUE, warning = FALSE, eval = TRUE}
+TotalCounts <- rowSums(EntireComm)
+Size <- 100
+StochRarefied <- stochasticRarefaction(EntireComm = EntireComm[TotalCounts > Size, ],
+                                       Size = Size,
+                                       Reps = 1000,
+                                       Planktonics = colnames(Comm)[-c(1:3)],
+                                       EndThrough = TRUE,
+                                       Ncores = 28)
+```
+
+
+```{r NichePacking, cache = TRUE, warning = FALSE, eval = TRUE}
+Rep <- 100
+FricSrRar <- rep(NA_real_, Rep)
+SesMpdRarMat <- SesFricRarMat <- matrix(NA_real_, ncol = Rep, nrow = nrow(Comm))
+for (i in 1:Rep) {
+  # SES functional richness for rarefied assemblages
+  SesFricRar <- getSesFric(StochRarefied[[2]][[i]], TraitsScaled, Runs = 99, Ncores = 28)
+  SesFricRarMat[TotalCounts > Size, i] <- SesFricRar
+  # Correlation between species richness and functional richness
+  SrRar <- rowSums(ifelse(StochRarefied[[2]][[i]] > 0, 1, 0))
+  FricSrRar[i] <- coef(lm(SesFricRar ~ SrRar))[2]
+  RareComm <- data.frame(Comm[TotalCounts > Size, 1:3], StochRarefied[[2]][[i]])
+  # SES phylogenetic community structure for rarefied assemblages
+  SesMpdRar <- getSesMpd(RareComm, CophTree, Runs = 99, Ncores = 28)
+  SesMpdRarMat[TotalCounts > Size, i] <- SesMpdRar
+}
+SesFricCI <- apply(SesFricRarMat, 1, function(x) quantile(x, c(0.025, 0.975), na.rm = TRUE))
+SesFricCI <- rbind(Comm$Age, SesFricCI)
+SesFricCI <- SesFricCI[, !is.na(SesFricCI[2, ])]
+SesMpdCI <- apply(SesMpdRarMat, 1, function(x) quantile(x, c(0.025, 0.975), na.rm = TRUE))
+SesMpdCI <- rbind(Comm$Age, SesMpdCI)
+SesMpdCI <- SesMpdCI[, !is.na(SesMpdCI[2, ])]
+rm(StochRarefied) # Free memory
+```
+
+
+
+```{r FigureS1, cache = TRUE, warning = FALSE, fig.width = 10, eval = TRUE}
+Sr <- rowSums(ifelse(Comm[, -c(1:3)] > 0, 1, 0))
+FricSrLM <- lm(SesFric ~ Sr)
+
+kable(tidy(M0))
+
+PredFr <- predict(FricSrLM, newdata = data.frame(Sr = 2:10), se.fit = TRUE)
+
+layout(matrix(1:3, ncol = 3), widths = c(0.5, 0.25, 0.25))
+par(las = 1, mar = c(4, 4, 0.1, 1))
+plot(1, 1, type = "n", xaxs = "i", 
+     xlab = "Age (Ma)", ylab = "Richness",
+     xaxt = "n", xlim = c(-1400, 0), ylim = c(0, 10))
+axis(side = 1, at = seq(-1400, 0, 200),
+     labels = rev(c("0.0", "0.2", "0.4", "0.6", "0.8", "1.0", "1.2", "1.4")))
+mtext(text = "(a)", side = 2, line = 2.5,
+      at = par("usr")[4] - diff(par("usr")[3:4]) * 0.02, font = 2, cex = 1.3)
+for(i in 1:nrow(LR04)){
+  if( -LR04[i,2] > min(Comm$Age) & (LR04[i,1] %% 2 == 1) ){
+    rect(xleft = -LR04[i,2], ybottom = par("usr")[3],
+         xright = -LR04[i-1,2], ytop = par("usr")[4],
+         border = NA, col = adjustcolor("grey", alpha.f = 0.1))
+  }
+}
+box()
+lines(Comm$Age, Sr, col = "grey25", lwd = 2)
+polygon(c(Comm$Age[TotalCounts > Size], rev(Comm$Age[TotalCounts > Size])),
+        c(StochRarefied[[1]][2, ], rev(StochRarefied[[1]][3, ])),
+        border = NA, 
+        col = adjustcolor("orange2", 0.3))
+lines(Comm$Age[TotalCounts > Size], StochRarefied[[1]][1, ],
+      col = "orange2")
+
+plot(SesFric ~ Sr, xlab = "Species richness", ylab = "SES FRic",
+     pch = 19, col = adjustcolor("dodgerblue", 0.1))
+mtext(text = "(b)", side = 2, line = 2.5,
+      at = par("usr")[4] - diff(par("usr")[3:4]) * 0.02, font = 2, cex = 1.3)
+lines(2:10, PredFr$fit, col = "dodgerblue")
+lines(2:10, PredFr$fit + 1.96*PredFr$se.fit, col = "dodgerblue", lty = 2)
+lines(2:10, PredFr$fit - 1.96*PredFr$se.fit, col = "dodgerblue", lty = 2)
+
+hist(FricSrRar, xlim = c(-0.35, -0.15), main = "",
+     xlab = "Correlation species richness and SES.FRic")
+abline(v = coef(FricSrLM), col = "dodgerblue", lwd = 2)
+mtext(text = "(c)", side = 2, line = 2.5,
+      at = par("usr")[4] - diff(par("usr")[3:4]) * 0.02, font = 2, cex = 1.3)
+```
+
+**FIGURE S1** Species richness and correlation between functional richness (SES.FRic) and species richness of *Cyclotella* sensu lato over time. (a) Species richness through time; dark grey curve shows observed *Cyclotella* s.l. richness and orange curve the mean rarefied richness and its 95% uncertainty intervals (shaded orange area). Vertical grey and white bars indicate glacial and interglacial periods, respectively. (b) Negative correlation between species richness and SES.FRic, indicating tighter niche space packing and strong environmental filtering over time. Predicted relationship (solid blue line), 95% prediction interval (dashed blue lines), and individual values of the 380 assemblages (blue dots). (c) Distribution of correlation strength between species richness and SES.FRic for rarefied assemblages and the observed relationship (blue line).
+
+<br>
+
+### 2.6 Assessing the response of deterministic assembly processes to environmental and climate changes 
+
+Environmental and climate change could influence assembly processes but also intrinsic population dynamics or speciation and extinction events. The following proxies representing local or regional paleoenvironmental changes obtained from DEEP-5045-1 were considered for the analyses of phylogenetic community structure: total inorganic carbon (TIC), total organic carbon (TOC), potassium (K) counts from X-ray fluorescence (XRF) scanning, relative sedimentary quartz content, percentages of arboreal pollen excluding Pinus pollen, percentage of pollen from deciduous oaks (Wagner et al., 2019), oxygen isotope composition of the lake water ($\delta^18$O<sub>lakewater</sub>) and grain size (Wilke et al., 2020). Signals were separated from stochastic noise for all proxies using Gaussian process (gp) smoothing, which is a machine learning approach to identify trends in paleoenvironmental variables as smooth functions of time (Simpson, 2018). We inferred the trend with the gp implementation of brms. We accounted for heteroscedasticity within all Bayesian models via weights representing the time elapsed between consecutive samples in the sediment record (Simpson, 2018). Since temporal autocorrelation might bias model coefficients, we tested for autocorrelation in the model residuals using the Moran’s I index for irregularly-spaced time series (see Legendre and Gauthier, 2014).
+
+```{r AP, cache = TRUE, warning = FALSE, eval = TRUE}
+Breaks <- rbind(c(0.001, 2), c(2, 5), c(5, 10), c(10, 20),
+                c(20, 30), c(30, 40), c(40, 50), c(50, 100))
+Pollen <- Pollen[nrow(Pollen):1, ]
+Pollen$Weight <- getWeight(Pollen$Age)
+
+PriorAP <- c(prior(normal(0, 1), class = Intercept), 
+             prior(inv_gamma(1.494197, 0.056607), class = lscale, coef = "gpAge"),
+             prior(normal(0, 2), class = sdgp))
+Nchains <- 4
+Ncores <- 4
+Inits <- setInitsPollen(Seed = sample(73, Nchains), Length = Nchains, K = 400)
+Threads <- 3
+Sys.setenv(STAN_NUM_THREADS = Threads)
+BrmAP <- brm(AP | trials(Total) + weights(Weight) ~ gp(Age, k = 400, c = 5/4, gr = FALSE),
+             data = Pollen,
+             family = binomial(),
+             inits = Inits,
+             chains = Nchains, cores = Ncores,
+             prior = PriorAP,
+             iter = 2000, warmup = 1000, thin = 1, refresh = 0,
+             threads = threading(Threads), backend = "cmdstanr",
+             control = list(adapt_delta = 0.9, max_treedepth = 20))
+summary(BrmAP)
+NewData <- data.frame(Age = Comm$Age, Total = 100, KRunMeanSE = 0.08)
+PredAP <- predict(BrmAP, newdata = NewData)
+ResidAP <- residuals(BrmAP, method = "posterior_predict")
+MoranAP <- correlogFork(time = Pollen$Age[!is.na(Pollen$AP)],
+                        z = ResidAP[, 1], method = "Moran", breaks = Breaks)
+plot(MoranAP)
+```
+
+
+```{r Oaks, cache = TRUE, warning = FALSE, eval = TRUE}
+PriorOaks <- c(prior(normal(0, 1), class = Intercept), 
+             prior(inv_gamma(1.494197, 0.056607), class = lscale, coef = "gpAge"),
+             prior(normal(0, 2), class = sdgp))
+Nchains <- 4
+Ncores <- 4
+Inits <- setInitsPollen(Seed = sample(73, Nchains), Length = Nchains, K = 400)
+Threads <- 3
+Sys.setenv(STAN_NUM_THREADS = Threads)
+BrmOaks <- brm(DecOaks | trials(Total) + weights(Weight) ~ gp(Age, k = K, c = 5/4, gr = FALSE),
+               data = Pollen,
+               family = binomial(),
+               inits = Inits,
+               chains = Nchains, cores = Ncores,
+               prior = PriorAP,
+               iter = 2000, warmup = 1000, thin = 1, refresh = 0,
+               threads = threading(Threads), backend = "cmdstanr",
+               control = list(adapt_delta = 0.9, max_treedepth = 20))
+summary(BrmOaks)
+PredOaks <- predict(BrmOaks, newdata = NewData)
+ResidOaks <- residuals(BrmOaks, method = "posterior_predict")
+MoranOaks <- correlogFork(time = Pollen$Age[!is.na(Pollen$DecOaks)],
+                          z = ResidOaks[, 1], method = "Moran", breaks = Breaks)
+plot(MoranOaks)
+```
+
+
+```{r CaK, cache = TRUE, warning = FALSE, eval = TRUE}
+CaK <- CaK[nrow(CaK):1, ]
+CaK$CaRunMean <- rep(NA, nrow(CaK))
+CaK$KRunMean <- rep(NA, nrow(CaK))
+# Due to memory constraints, we used 21 point running mean instead of the 170,000 raw values
+Mid <- 21
+Up <- (Mid + 1)/2
+Lo <- (Mid - 1)/2
+NrowCaK <- nrow(CaK)
+for (i in 1:NrowCaK) {
+  From <- (i-Lo)
+  if (From < 1) {From <- 1}
+  To <- (i+Lo)
+  if (To > NrowCaK) {To <- NrowCaK}
+  Sub <- CaK[From:To, ]
+  CaK$CaRunMean[i] <- mean(Sub[, "Ca"], na.rm = TRUE)
+  CaK$KRunMean[i] <- mean(Sub[, "K"], na.rm = TRUE)
+}
+Sel <- seq(1, nrow(CaK), by = Mid)
+CaKSel <- CaK[Sel, ]
+CaKSel$Weight <- getWeight(CaKSel$Age)
+CaKSel$CaRunMean <- CaKSel$CaRunMean / 1000
+CaKSel$KRunMean <- CaKSel$KRunMean / 1000
+CaKSel$CaRunMeanSE <- CaKSel$CaRunMeanSE / 1000
+CaKSel$KRunMeanSE <- CaKSel$KRunMeanSE / 1000
+
+Threads <- 6
+Sys.setenv(STAN_NUM_THREADS = Threads)
+Nchains <- 4
+Ncores <- 4
+K <- 4000
+Inits <- setInitsK(Seed = sample(73, Nchains), Length = Nchains, K = 4000)
+BrmK <- brm(KRunMean | weights(Weight) + se(KRunMeanSE, sigma = TRUE) + trunc(lb = 0) ~ 
+              gp(Age, k = 2000, c = 5/4),
+            data = CaKSel,
+            family = gaussian(),
+            inits = Inits,
+            chains = Nchains, cores = Ncores,
+            iter = 2000, warmup = 1000, thin = 1, refresh = 0,
+            threads = threading(Threads), backend = "cmdstanr",
+            control = list(adapt_delta = 0.8, max_treedepth = 10))
+summary(BrmK)
+PredK <- predict(BrmK, newdata = NewData)
+ResidK <- residuals(BrmK, method = "posterior_predict")
+MoranK <- correlogFork(time = CaKSel$Age[!is.na(CaKSel$CaRunMean)],
+                          z = ResidK[, 1], method = "Moran", breaks = Breaks)
+plot(MoranK)
+```
+
+
+```{r Isotope, cache = TRUE, warning = FALSE, eval = TRUE}
+Isotope <- Isotope[nrow(Isotope):1, ]
+Isotope$Weight <- getWeight(Isotope$Age)
+
+Nchains <- 4
+Ncores <- 4
+Threads <- 3
+Sys.setenv(STAN_NUM_THREADS = Threads)
+Inits <- setInitsIsotope(Seed = sample(73, Nchains), Length = Nchains, K = 600)
+BrmIso <- brm(Lakewater | weights(Weight) ~ gp(Age, k = 600, c = 5/4, gr = FALSE),
+              data = Isotope,
+              init = Inits,
+              family = gaussian(),
+              chains = Nchains, cores = Ncores,
+              iter = 2000, warmup = 1000, thin = 1, refresh = 0,
+              threads = threading(Threads), backend = "cmdstanr",
+              control = list(adapt_delta = 0.8, max_treedepth = 10))
+summary(BrmIso)
+PredIso <- predict(BrmIso, newdata = NewData)
+ResidIso <- residuals(BrmIso, method = "posterior_predict")
+MoranIso <- correlogFork(time = Isotope$Age[!is.na(Isotope$Lakewater)],
+                         z = ResidIso[, 1], method = "Moran", breaks = Breaks)
+plot(MoranIso)
+```
+
+
+```{r Tic, cache = TRUE, warning = FALSE, eval = TRUE}
+TicToc <- TicToc[nrow(TicToc ):1, ]
+TicToc$Weight <- getWeight(TicToc$Age)
+
+Threads <- 3
+Sys.setenv(STAN_NUM_THREADS = Threads)
+Nchains <- 4
+Ncores <- 4
+Inits <- setInitsTic(Seed = sample(73, Nchains), Length = Nchains, K = 2000)
+BrmTic <- brm(TIC | weights(Weight) ~ gp(Age, k = 2000, c = 5/4), 
+              family = Beta(),
+              data = TicToc,
+              inits = Inits,
+              cores = Ncores, chains = Nchains,
+              iter = 3000, warmup = 1000, thin = 1, refresh = 0,
+              threads = threading(Threads), backend = "cmdstanr",
+              control = list(adapt_delta = 0.9, max_treedepth = 15))
+summary(BrmTic)
+PredTic <- predict(BrmTic, newdata = NewData)
+ResidTic <- residuals(BrmTic, method = "posterior_predict")
+MoranTic <- correlogFork(time = TicToc$Age[!is.na(TicToc$TIC)],
+                          z = ResidTic[, 1], method = "Moran", breaks = Breaks)
+plot(MoranTic)
+```
+
+
+```{r Toc, cache = TRUE, warning = FALSE, eval = TRUE}
+Threads <- 3
+Sys.setenv(STAN_NUM_THREADS = Threads)
+Nchains <- 4
+Ncores <- 4
+Inits <- setInitsTic(Seed = sample(73, Nchains), Length = Nchains, K = 2000)
+BrmToc <- brm(TOC | weights(Weight) ~ gp(Age, k = 2000, c = 5/4), 
+              family = Beta(),
+              data = TicToc,
+              inits = Inits,
+              cores = Ncores, chains = Nchains,
+              iter = 3000, warmup = 1000, thin = 1, refresh = 0,
+              threads = threading(Threads), backend = "cmdstanr",
+              control = list(adapt_delta = 0.9, max_treedepth = 15))
+summary(BrmToc)
+PredToc <- predict(BrmToc, newdata = NewData)
+ResidToc <- residuals(BrmTic, method = "posterior_predict")
+MoranToc <- correlogFork(time = TocToc$Age[!is.na(TicToc$TOC)],
+                          z = ResidToc[, 1], method = "Moran", breaks = Breaks)
+plot(MoranToc)
+```
+
+Multivariate grain size composition was modelled in brms using the dirichlet distribution. We obtained the temporal trend by summerizing the model-predicted grain-size composition via the first principle component of the  isometric logarithmic ratio-transformed data using the R packages robCompositions 2.3.1 (Filzmoser et al., 2018).
+
+```{r GrainSize, cache = TRUE, warning = FALSE, eval = TRUE}
+DataGrainsize <- Grainsize[, c("SAND","VERY_COARSE_SILT", "COARSE_SILT", "MEDIUM_SILT", 
+                               "FINE_SILT", "VERY_FINE_SILT", "CLAY")]
+colnames(DataGrainsize) <- c("y1", "y2", "y3", "y4", "y5", "y6", "y7")
+DataGrainsize <- DataGrainsize / rowSums(DataGrainsize) # At all times the sum is 1
+DataGrainsize$Age <- Grainsize$Age
+DataGrainsize$Weight <- getWeight(DataGrainsize$Age)
+# Some inits fail but no way to set inits as list
+Nchains <- 4
+Ncores <- 1
+Threads <- 3
+Sys.setenv(STAN_NUM_THREADS = Threads)
+BrmGrainsizeList <- vector(mode = "list") 
+Nsuccess <- 0
+while (Nsuccess < Nchains) {
+  BrmGrainsize <- brm(bind(y1, y2, y3, y4, y5, y6, y7) | weights(Weight) ~ 
+                        gp(Age, k = 10, c = 5/4, gr = FALSE),
+                      data = DataGrainsize,
+                      family = dirichlet(),
+                      chains = 1, cores = 1,
+                      iter = 2000, warmup = 1000, thin = 1, refresh = 0,
+                      threads = threading(Threads), backend = "cmdstanr",
+                      control = list(adapt_delta = 0.9, max_treedepth = 15))
+  SummaryBrmGrainsize <- summary(BrmGrainsize)
+  Converged <- all(c(SummaryBrmGrainsize$fixed[, "Rhat"] < 1.05, SummaryBrmGrainsize$gp[, "Rhat"] < 1.05))
+  if (Converged) {
+    Nsuccess <- Nsuccess + 1
+  }
+  BrmGrainsizeList[[Nsuccess]] <- BrmGrainsize
+}
+BrmGrainsize <- combine_models(mlist = BrmGrainsizeList)
+summary(BrmGrainsize)
+PredGrainsize <- predict(BrmGrainsize)
+GrainsizePca <- pcaCoDa(PredGrainsize[, 1, ])
+# Explained variances
+GrainsizePca$princompOutputClr$sdev^2 / sum(GrainsizePca$princompOutputClr$sdev^2) 
+GrainsizePca <- GrainsizePca$scores
+```
+
+In addition to the local and regional variables from Lake Ohrid, the following external parameters were included in the analyses: global benthic $\delta\textrm{18O}$ isotope stack LR04 (Lisiecki & Raymo, 2005), Medstack $\delta\textrm{18O}$ planktonic isotope ratios (Wang et al., 2010), and northern hemisphere summer insolation at the latitude of Lake Ohrid (i.e. 41° N) calculated with the R package palinsol 0.93 (Crucifix, 2016) according to equations provided by Laskar et al. (2004). 
+
+```{r Insolation, cache = TRUE, warning = FALSE, eval = TRUE}
+data(BER78) 
+Times <- Comm$Age*1000
+getObl <- function(t) {ber78 = ber78(t)}
+Obls <- data.frame( t(sapply(Times, getObl)) )
+Insolation41 <- rep(NA, length(Times))
+for(i in 1:nrow(Obls)){
+  Insolation41[i] <- Insol_d1d2(orbit = c(eps = as.numeric(Obls[i, 1]),
+                                          ecc = as.numeric(Obls[i, 2]),
+                                          varpi = as.numeric(Obls[i, 3])), 
+                                d1 = 171, d2 = 172, lat = 41*pi/180,
+                                S0 = 1368, avg = TRUE)
+}
+```
+
+We matched the environmental predictors to the phylogenetic community structure via their age information. Local/regional paleoenvironmental proxies were quantified with a higher temporal resolution than the fossil samples and thus always overlapped with those. External proxies were linearly interpolated to obtain the respective values for the age of fossil communities.
+
+```{r LR04, cache = TRUE, warning = FALSE, eval = TRUE}
+colnames(LR04Values) <- c("Time", "d18O", "SE")
+LR04Values <- LR04Values[nrow(LR04Values):1, ]
+LR04Values$Time <- -LR04Values$Time
+Gast <- Gast[nrow(Gast):1, ]
+Gast$Age <- -Gast$Age
+Medstack <- Medstack[nrow(Medstack):1, ]
+# Linear interpolation at the age of diatom communities
+LR04Comm <- approx(x = LR04Values$Time, y = LR04Values$d18O, xout = Comm$Age)$y
+GastComm <- approx(x = Gast$Age, y = Gast$Temp, xout = Comm$Age)$y
+MedstackComm <- approx(x = -Medstack$Age, y = Medstack$d18Ostack, xout = Comm$Age)$y
+```
+
+We retained the following predictors for the analysis of phylogenetic community structure while excluding the remaining ones due to their collinearity with retained predictors: grainsize, insolation, isotope composition, Potassium, Medstack, deciduous oaks and TOC.
+
+```{r DataMpdRegr, cache = TRUE, warning = FALSE, eval = TRUE}
+DataRegr <- data.frame(Age = Comm$Age,
+                       Mpd = SesMpd,
+                       Tic = PredTic[, 1] * 100,
+                       Toc = PredToc[, 1] * 100,
+                       AP = PredAP[, 1],
+                       Oaks = PredOaks[, 1],
+                       Quartz = PredQuartz[, 1],
+                       Grainsize = GrainsizePca[, 1],
+                       Iso = PredIso[, 1],
+                       K = PredK[, 1],
+                       Ins = Insolation41,
+                       LR04 = LR04Comm,
+                       Gast = GastComm,
+                       Medstack = MedstackComm)
+DataRegr$Weight <- getWeight(DataRegr$Age)
+EnvCor <- cor(DataRegr[, -c(1, 2, ncol(DataRegr))])
+EnvCorDist <- as.dist(1 - abs(EnvCor))
+EnvCorClust <- hclust(EnvCorDist, method = "average")
+plot(as.dendrogram(EnvCorClust), horiz = TRUE,
+     main = "", xlab = "Absolute correlation",
+     ylab = "", yaxt = "n",
+     xlim = c(1, 0),
+     nodePar = list(pch = NA, lab.cex = 0.8))
+axis(side = 1, at = seq(0, 1, 0.2), labels = seq(1, 0, -0.2))
+abline(v = 0.3, lty = 2, lwd = 2, col = "red")
+```
+
+Dendrogram showing collinearity of paleoenvironmental proxies.
+
+<br>
+
+To assess impacts on assembly processes, we used regression analysis to examine the relationship between phylogenetic community structure and long-term climate, local paleoenvironmental parameters. We allowed for discrete shifts in community structure at a moment in time as well as including time as a predictor to capture potential intrinsic dynamics and temporal changes. Regression analysis was performed utilizing Bayesian inference in stan 2.21 (Stan Development Team, 2021), which we interfaced through the R package brms 2.15.0 (Bürkner, 2018). Because the number of these discrete shifts in phylogenetic community structure cannot be inferred they were estimated with a change point analysis in the R package ecp 3.1.0 (James & Matteson, 2015) while our Bayesian analysis quantifed the uncertainty in the age and magnitude of the shifts. These shifts in phylogenetic community structure and a potential change over time do not tell the nature of the change and intrinsic dynamics of the assemblage are only one possible interpretation.
+
+```{r MpdShift, cache = TRUE, warning = FALSE, eval = TRUE}
+Eag <- e.agglo(matrix(SesMpd[-1], ncol = 1),
+               member = 1:length(SesMpd[-1]),
+               alpha = 1, penalty = function(cp) - length(cp))
+```
+
+```{r MpdRegr, cache = TRUE, warning = FALSE, eval = TRUE}
+MpdRegr <- brms::bf(Mpd | weights(Weight) ~ bAge * Age +
+                      bGrain * Grainsize +
+                      bIns * Ins +
+                      bIso * Iso +
+                      bK * K +
+                      bMed * Medstack +
+                      bOaks * Oaks + 
+                      bToc * Toc +
+                      b0 * step(Age - o1) +
+                      b1 * inv_logit((o1 - Age) * 3) + 
+                      b2 * inv_logit((o2 - Age) * 3) + 
+                      b3 * inv_logit((o3 - Age) * 3) + 
+                      b4 * inv_logit((o4 - Age) * 3) + 
+                      b5 * inv_logit((o5 - Age) * 3) + 
+                      b6 * inv_logit((o6 - Age) * 3),
+                    # keep omega within the range of predictor
+                    brms::nlf(o1 ~ inv_logit(S1) * -1364.7),
+                    brms::nlf(o2 ~ inv_logit(S1 + S2) * -1364.7),
+                    brms::nlf(o3 ~ inv_logit(S1 + S2 + S3) * -1364.7),
+                    brms::nlf(o4 ~ inv_logit(S1 + S2 + S3 + S4) * -1364.7),
+                    brms::nlf(o5 ~ inv_logit(S1 + S2 + S3 + S4 + S5) * -1364.7),
+                    brms::nlf(o6 ~ inv_logit(S1 + S2 + S3 + S4 + S5 + S6) * -1364.7),
+                    b0 + b1 + b2 + b3 + b4 + b5 + b6 + S1 + S2 + S3 + S4 + S5 + S6 ~ 1,
+                    bAge + bGrain + bIns + bIso + bK + bMed + bOaks + bToc ~ 1,
+                    nl = TRUE)
+MpdPrior <- c(prior(normal(-0.7, 0.5), nlpar = "b0"),
+              prior(normal(1.3, 0.5), nlpar = "b1"),
+              prior(normal(1.2, 0.5), nlpar = "b2"),
+              prior(normal(1.9, 0.5), nlpar = "b3"),
+              prior(normal(-1.7, 0.5), nlpar = "b4"),
+              prior(normal(0.6, 0.5), nlpar = "b5"),
+              prior(normal(-0.8, 0.5), nlpar = "b6"),
+              prior(normal(0, 0.5), nlpar = "bAge"),
+              prior(normal(0, 0.5), nlpar = "bGrain"),
+              prior(normal(0, 0.5), nlpar = "bIns"),
+              prior(normal(0, 0.5), nlpar = "bIso"),
+              prior(normal(0, 0.5), nlpar = "bK"),
+              prior(normal(0, 0.5), nlpar = "bMed"),
+              prior(normal(0, 0.5), nlpar = "bOaks"),
+              prior(normal(0, 0.5), nlpar = "bToc"),
+              prior(normal(-2, 2), nlpar = "S1"),
+              prior(exponential(2), nlpar = "S2", lb = 0),
+              prior(exponential(2), nlpar = "S3", lb = 0),
+              prior(exponential(2), nlpar = "S4", lb = 0),
+              prior(exponential(2), nlpar = "S5", lb = 0),
+              prior(exponential(2), nlpar = "S6", lb = 0))
+Ncores <- 4
+Nchains <- 4
+Inits <- setInitsRegr(Seed = sample(73, Nchains), Length = Nchains)
+Threads <- 3
+Sys.setenv(STAN_NUM_THREADS = Threads)
+FitMpd <- brm(MpdRegr,
+              data = DataRegr,
+              inits = Inits,
+              prior = MpdPrior,
+              cores = Ncores, chains = Nchains,
+              iter = 6000, warmup = 3000, thin = 1, refresh = 0,
+              threads = threading(Threads), backend = "cmdstanr",
+              control = list(adapt_delta = 0.8, max_treedepth = 15))
+```
+
+
+```{r SummaryMpdRegr, cache = TRUE, warning = FALSE, eval = TRUE}
+# Rescale inferred parameters to shift times
+P1 <- as.data.frame(ggs(FitMpd, burnin = TRUE))
+S1 <- P1$value[P1$Parameter == "b_a1_Intercept"]
+S2 <- P1$value[P1$Parameter == "b_a2_Intercept"]
+S3 <- P1$value[P1$Parameter == "b_a3_Intercept"]
+S4 <- P1$value[P1$Parameter == "b_a4_Intercept"]
+S5 <- P1$value[P1$Parameter == "b_a5_Intercept"]
+S6 <- P1$value[P1$Parameter == "b_a6_Intercept"]
+S6 <- brms:::inv_logit(S1 + S2 + S3 + S4 + S5 + S6) * 1367.4
+S5 <- brms:::inv_logit(S1 + S2 + S3 + S4 + S5) * 1367.4
+S4 <- brms:::inv_logit(S1 + S2 + S3 + S4) * 1367.4
+S3 <- brms:::inv_logit(S1 + S2 + S3) * 1367.4
+S2 <- brms:::inv_logit(S1 + S2) * 1367.4
+S1 <- brms:::inv_logit(S1) * 1367.4
+```
+
+
+
+```{r Figure4, cache = TRUE, warning = FALSE, fig.width = 10, fig.height = 9, eval = TRUE}
+AgeShifts <- brms:::inv_logit(cumsum(fixef(FitMpd)[8:13, 1])) * -1364.7
+ColShift <- rep("grey", length(SesMpd))
+ColShift[Comm$Age > AgeShifts[1]] <- "aquamarine2"
+ColShift[Comm$Age <= AgeShifts[1] & Comm$Age > AgeShifts[2]] <- "red4"
+ColShift[Comm$Age <= AgeShifts[2] & Comm$Age > AgeShifts[3]] <- "aquamarine1"
+ColShift[Comm$Age <= AgeShifts[3] & Comm$Age > AgeShifts[4]] <- "red2"
+ColShift[Comm$Age <= AgeShifts[4] & Comm$Age > AgeShifts[5]] <- "aquamarine4"
+ColShift[Comm$Age <= AgeShifts[5] & Comm$Age > AgeShifts[6]] <- "lightsteelblue"
+ColShift[Comm$Age <= AgeShifts[6]] <- "aquamarine3"
+
+PlotData <- data.frame(Age = -c(1365:0))
+PredGrainsizePlot <- predict(BrmGrainsize, newdata = PlotData)
+PredGrainsizeSum <- t(apply(PredGrainsizePlot[, 1, ], 1, cumsum))
+ObsGrainsizeSum <- t(apply(DataGrainsize[, 1:7], 1, cumsum))
+
+PredIsotopePlot <- predict(BrmIso, newdata = PlotData)
+
+
+layout(matrix(1:5, nrow = 5), heights = c(0.1, 0.2, 0.2, 0.2, 0.3))
+par(las = 1, mar = c(0.1, 4, 0.5, 0.5))
+
+plot(1, 1, type = "n", ylim = c(0, 5), xlim = c(0, 10), 
+     xlab = "", ylab = "",
+     xaxs = "i", yaxs = "i", xaxt = "n", yaxt = "n")
+mtext(text = "(a)", side = 2, line = 2.5, at = par("usr")[4] - diff(par("usr")[3:4]) * 0.05,
+      font = 2, cex = 1.3)
+legend(x = 0, y = 5.5, bty = "n", legend = c("Sand", "Very coarse silt", "Coarse silt"),
+       fill = c("red3", "red", "orange2"))
+legend(x = 2, y = 5.5, bty = "n", legend = c("Medium silt", "Fine silt", "Very fine silt"),
+       fill = c("orange", "yellow3", "yellow2"))
+legend(x = 4, y = 5.5, bty = "n", legend = "Clay", fill = "yellow")
+plot(1, 1, type = "n", ylim = c(0, 1), xlim = c(-1400, 0),
+     xlab = "", ylab = "Grain size composition (%)",
+     xaxs = "i", yaxs = "i", xaxt = "n")
+Zeros <- rep(0, length(PlotData$Age))
+polygon(c(PlotData$Age, rev(PlotData$Age)), c(PredGrainsizeSum[, 7], Zeros), border = NA, col = "yellow")
+polygon(c(PlotData$Age, rev(PlotData$Age)), c(PredGrainsizeSum[, 6], Zeros), border = NA, col = "yellow2")
+polygon(c(PlotData$Age, rev(PlotData$Age)), c(PredGrainsizeSum[, 5], Zeros), border = NA, col = "yellow3")
+polygon(c(PlotData$Age, rev(PlotData$Age)), c(PredGrainsizeSum[, 4], Zeros), border = NA, col = "orange")
+polygon(c(PlotData$Age, rev(PlotData$Age)), c(PredGrainsizeSum[, 3], Zeros), border = NA, col = "orange2")
+polygon(c(PlotData$Age, rev(PlotData$Age)), c(PredGrainsizeSum[, 2], Zeros), border = NA, col = "red")
+polygon(c(PlotData$Age, rev(PlotData$Age)), c(PredGrainsizeSum[, 1], Zeros), border = NA, col = "red3")
+for (i in 1:nrow(ObsGrainsizeSum)) {
+  points(rep(Data$Age[i], 6), ObsGrainsizeSum[i, 1:6],
+         pch = 21, cex = 0.4, lwd = 0.1,
+         col = adjustcolor(c("grey40", "grey45", "grey50", "grey60", "grey70", "grey80"), alpha = 0.5), 
+         bg = adjustcolor(c("red3", "red", "orange2", "orange", "yellow3", "yellow2"), alpha = 0.5))
+}
+box()
+
+par(las = 1, mar = c(0.1, 4, 0.1, 0.5))
+plot(0, 0, type = "n", xlim = c(-1400, 0), ylim = c(-11, -1),
+     xlab = "", ylab = expression(paste(delta^{18}, "O"[lakewater], "(\u2030)")),
+     xaxs = "i", yaxs = "i", xaxt = "n")
+mtext(text = "(b)", side = 2, line = 2.5, at = par("usr")[4] - diff(par("usr")[3:4]) * 0.05,
+      font = 2, cex = 1.3)
+plotLR04(LR04, Comm$Age)
+polygon(c(PlotData$Age, rev(PlotData$Age)), c(PredIsotopePlot[, 3], rev(PredIsotopePlot[, 4])),
+          border = NA, col = adjustcolor("dodgerblue", 0.2))
+lines(Isotope$Age, Isotope$Lakewater, col = "grey")
+lines(PlotData$Age, PredIsotopePlot[, 1], col = "dodgerblue")
+box()
+
+plot(Comm$Age, SesFric, type = "n", xlim = c(-1400, 0), ylim = c(-2, 2),
+     xlab = "", ylab = "SES Functional richness",
+     xaxs = "i", yaxs = "i", xaxt = "n")
+mtext(text = "(c)", side = 2, line = 2.5, at = par("usr")[4] - diff(par("usr")[3:4]) * 0.05,
+      font = 2, cex = 1.3)
+plotLR04(LR04, Comm$Age)
+polygon(c(SesFricCI[1, ], rev(SesFricCI[1, ])), 
+        c(SesFricCI[2, ], rev(SesFricCI[3, ])),
+          border = NA, col = adjustcolor("green4", 0.2))
+lines(Comm$Age, SesFric, col = "green4")
+
+par(las = 1, mar = c(4, 4, 0.1, 0.5))
+plot(Comm$Age, SesMpd, type = "n", xlim = c(-1400, 0), ylim = c(-2, 2),
+     xlab = "Time (Ma)", ylab = "SES MPD",
+     xaxs = "i", yaxs = "i", xaxt = "n")
+mtext(text = "(d)", side = 2, line = 2.5, at = par("usr")[4] - diff(par("usr")[3:4]) * 0.05,
+      font = 2, cex = 1.3)
+plotLR04(LR04, Comm$Age)
+lines(Comm$Age, SesMpd)
+polygon(c(SesMpdCI[1, ], rev(SesMpdCI[1, ])), 
+        c(SesMpdCI[2, ], rev(SesMpdCI[3, ])),
+          border = NA, col = adjustcolor("black", 0.2))
+points(Comm$Age[-1], SesMpd[-1],
+       bg = ColShift[-1], col = "grey60", pch = 21, cex = 0.7)
+axis(side = 1, at = seq(-1400, 0, 200),
+     labels = rev(c("0", "0.2", "0.4", "0.6", "0.8", "1.0", "1.2", "1.4")))
+```
+
+**FIGURE 4** Grain size distribution, oxygen isotope composition of the lake water ($\delta^18$O<sub>lakewater</sub>), functional richness, and phylogenetic community structure in Lake Ohrid over time. (a) Relative proportion of different grain size fractions, indicating an increase in lake size. Dots show the raw data. (b) Thick blue curve shows the time-average $\delta^18$O<sub>lakewater</sub>, indicating lake-level variability. The shaded polygon represents the 95% prediction interval and the light grey curve the raw data. (c) Green curve shows the accumulation of functional richness, indicating small (< 0) or large (> 0) occupancy of niche space. The shaded polygon displays the 95% range for a rarefied taxon sampling.  (d) Phylogenetic community structure among Cyclotella sensu lato species; bluish dots showing distinct periods of environmental filtering, reddish dots phases of species interaction, and purple dots phase of random assembly. The shaded polygon indicates the effect of taxon sampling. Vertical grey and white bars indicate glacial and interglacial periods, respectively. Blue bar at the bottom of the figure indicates shallow- and deep-water phases of Lake Ohrid.
+
+<br>
+
+
+
+```{r Figure5, cache = TRUE, warning = FALSE, fig.width = 3, fig.height = 9, eval = TRUE}
+CondEff <- brms::conditional_effects(FitMpd, effects = c("Age", "Grainsize", "Iso"), resolution = 400)
+layout(matrix(1:3, ncol = 3))
+par(las = 1, mar = c(4, 5, 0.5, 0.1))
+plot(1, -0.6, type = "n", xlim = range(CondEff$Grainsize$Grainsize), ylim = c(-0.95, -0.35),
+     xlab = "Grain size (PC1)", ylab = "Mean pyhlogenetic distance\n(SES)")
+mtext(text = "(a)", side = 2, line = 3.2,
+      at = par("usr")[4] - diff(par("usr")[3:4]) * 0.02, font = 2, cex = 1.0)
+polygon(c(CondEff$Grainsize$Grainsize, rev(CondEff$Grainsize$Grainsize)), 
+        c(CondEff$Grainsize$lower__, rev(CondEff$Grainsize$upper__)),
+        border = NA, col = adjustcolor("orange2", 0.2))
+lines(CondEff$Grainsize$Grainsize, CondEff$Grainsize$estimate__, col = "orange")
+
+plot(-8, -0.6, type = "n", xlim = range(CondEff$Iso$Iso), ylim = c(-0.95, -0.35),
+     xlab = expression(paste(delta^{18}, "O"[lakewater], "(\u2030)")),
+     ylab = "Mean pyhlogenetic distance\n(SES)")
+mtext(text = "(b)", side = 2, line = 3.2,
+      at = par("usr")[4] - diff(par("usr")[3:4]) * 0.02, font = 2, cex = 1.0)
+polygon(c(CondEff$Iso$Iso, rev(CondEff$Iso$Iso)), 
+        c(CondEff$Iso$lower__, rev(CondEff$Iso$upper__)),
+        border = NA, col = adjustcolor("dodgerblue", 0.2))
+lines(CondEff$Iso$Iso, CondEff$Iso$estimate__, col = "dodgerblue")
+
+plot(0, 0, type = "n", xlim = c(-1400, 0), ylim = c(-1.2, 1.2), xaxt = "n",
+     xlab = "Age (Ma)", ylab = "Mean pyhlogenetic distance\n(SES)")
+axis(side = 1, at = seq(-1400, 0, 200),
+     labels = rev(c("0", "0.2", "0.4", "0.6", "0.8", "1.0", "1.2", "1.4")))
+mtext(text = "(c)", side = 2, line = 3.2,
+      at = par("usr")[4] - diff(par("usr")[3:4]) * 0.02, font = 2, cex = 1.0)
+polygon(c(CondEff$Age$Age, rev(CondEff$Age$Age)), 
+        c(CondEff$Age$lower__, rev(CondEff$Age$upper__)),
+        border = NA, col = adjustcolor("black", 0.2))
+lines(CondEff$Age$Age, CondEff$Age$estimate__, col = "black")
+```
+
+**FIGURE 5** Response plots showing the relationship between phylogenetic community structure and (a) grain size (high SES MPD = environmental filtering; low SES MPD = species competition), (b) $\delta^18$O<sub>lakewater</sub> (high SES MPD = species competition; low SES MPD = species competition), and (c) time with a linear increase and discrete shifts (i.e. representing unmeasured paleoenvironmental parameters and/or intrinsic population dynamics of communities); predicted by the regression model. The individual response plots were generated by keeping the other variable at its mean level. The regression line is depicted by a solid line and the 95% prediction intervals by shaded polygons.
+
+
+## Session info
+
+```{r}
+sessionInfo()
+```
+

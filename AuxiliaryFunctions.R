@@ -18,17 +18,6 @@ propAbundResamp <- function(CommMat, Index){
   return(SpeciesResampled)
 }
 
-getWeight <- function(Time) {
-  TimeDiff <- diff(Time)
-  Weight <- rep(NA_real_, length(Time))
-  for (i in 2:length(Time)) {
-    Weight[i] <- mean(TimeDiff[(i-1):i])
-  }
-  Weight[is.na(Weight)] <- mean(Weight, na.rm = TRUE)
-  Weight <- Weight / mean(Weight)
-  return(Weight)
-}
-
 
 sesMpdOneComm <- function(Samp, Dis, NullModel, AbundanceWeighted, Runs, 
                           CommMat = NULL, Index = NULL){
@@ -377,12 +366,13 @@ setInitsK <- function(Seed, Length, K) {
   InitList <- vector(mode = "list", length = Length)
   for (i in 1:Length) {
     set.seed(Seed[i])
-    Inter <- runif(n = 1, min = 4, max = 6)
+    Inter <- runif(n = 1, min = 5, max = 6)
     InitList[[i]] <- list(
       "Intercept" = Inter,
-      "lscale_1" = matrix(runif(n = 1, min = 0.0001, max = 0.01), 1, 1),
+      "sdgp_1" = array(runif(n = 1, min = 1.5, max = 2)),
+      "lscale_1" = matrix(runif(n = 1, min = 0.0001, max = 0.001), 1, 1),
       "zgp_1" = array(runif(n = K, min = -1, max = 1)),
-      "sigma" = runif(n = 1, min = 0.1, max = 2),
+      "sigma" = runif(n = 1, min = 0.3, max = 0.5),
       "b_Intercept" = Inter
     )
   }

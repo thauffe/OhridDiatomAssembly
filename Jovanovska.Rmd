@@ -528,7 +528,7 @@ MoranQuartz <- correlogFork(time = Quartz$Age[!is.na(Quartz$Quartz)],
 plot(MoranQuartz)
 ```
 
-
+The gaussian process modelling of Potassium has been performed on a computer with 64 GB of RAM. For less beefy machine, either increase Mid to 101 or use only one core and one chain.
 ```{r CaK, cache = TRUE, warning = FALSE, eval = TRUE}
 CaK <- CaK[nrow(CaK):1, ]
 CaK$CaRunMean <- rep(NA, nrow(CaK))

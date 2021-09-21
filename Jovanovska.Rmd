@@ -571,7 +571,7 @@ BrmK <- brm(KRunMean | weights(Weight) + se(KRunMeanSE, sigma = TRUE) + trunc(lb
             chains = Nchains, cores = Ncores,
             iter = 2000, warmup = 1000, thin = 1, refresh = 0,
             backend = "cmdstanr",
-            control = list(adapt_delta = 0.9, max_treedepth = 12))
+            control = list(adapt_delta = 0.9, max_treedepth = 15))
 summary(BrmK)
 PredK <- predict(BrmK, newdata = NewData)
 ResidK <- residuals(BrmK, method = "posterior_predict")

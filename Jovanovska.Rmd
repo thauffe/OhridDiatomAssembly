@@ -519,19 +519,27 @@ Pollen$Weight <- getWeight(Pollen$Age) # Get observational weights
 PriorAP <- c(prior(normal(0, 1), class = Intercept), 
              prior(inv_gamma(1.494197, 0.056607), class = lscale, coef = "gpAge"),
              prior(normal(0, 2), class = sdgp))
-# Get initial values from where we start Hamiltonian Monte Carlo sampling
-Inits <- setInitsPollen(Seed = sample(73, Nchains), # Random seed
-                        Length = Nchains, # Four sets of intial values for the four chains
-                        K = 400) # Basis of 400 for approximate Gaussian processes
 Nchains <- 4 # Run four chains
 Ncores <- 4 # On four cores in parallel
 # Additional three cores for within-chain parallelization to speed-up inference
 # (i.e. 4x3 cores per chain)
 Threads <- 3 
 Sys.setenv(STAN_NUM_THREADS = Threads)
+# Get initial values from where we start Hamiltonian Monte Carlo sampling
+Inits <- setInitsPollen(Seed = sample(73, Nchains), # Random seed
+                        Length = Nchains, # Four sets of intial values for the four chains
+                        K = 400) # Basis of 400 for approximate Gaussian processes
+
+# Response:
+#   AP | trials(Total): Number of aboreal pollen (AP) in comparison to the total count of pollen ( |trials(Total) ),
+#                       which gives us the proportion of aboreal pollen
+#   + weights(Weight): Observational weights per pollen sample (time captured by each sample); 
+#                      accounts for heteroskedasticity (Simpson, 2018)
+# Predictor:
+# ~ gp(Age, k = 400, c = 5/4, gr = FALSE): Gaussian process smoothing of age of the pollen sample
 BrmAP <- brm(AP | trials(Total) + weights(Weight) ~ gp(Age, k = 400, c = 5/4, gr = FALSE),
              data = Pollen,
-             family = binomial(),
+             family = binomial(), # Binomial distribution because we have a proportion of pollen
              inits = Inits, # Use initial values obtained by setInitsPollen()
              chains = Nchains, # Number of chains
              cores = Ncores, # Number of cores

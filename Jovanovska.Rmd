@@ -561,8 +561,7 @@ BrmAP <- brm(AP | trials(Total) + weights(Weight) ~ gp(Age, k = 400, c = 5/4, gr
 # Summarize posterior distribution of parameters and evaluate convergence through Rhat and ESS
 summary(BrmAP) 
 
-# Get smoothed values of aboreal pollen proportion for the same moments
-# in time where we have a diatom assemblage.
+# Get smoothed values of aboreal pollen proportion for the same moments in time where we have a diatom assemblage.
 # Will be used as a potential predictor of mean phylogenetic community distance (MPD)
 # in the regression analysis (FitMPD)
 NewData <- data.frame(Age = Comm$Age, 
@@ -613,11 +612,17 @@ BrmOaks <- brm(DecOaks | trials(Total) + weights(Weight) ~ gp(Age, k = 400, c = 
                control = list(adapt_delta = 0.9, max_treedepth = 20))
 summary(BrmOaks)
 PredOaks <- predict(BrmOaks, newdata = NewData)
+```
+
+
+```{r residOaks, cache = TRUE, warning = FALSE, eval = FALSE}
 ResidOaks <- residuals(BrmOaks, method = "posterior_predict")
 MoranOaks <- correlogFork(time = Pollen$Age[!is.na(Pollen$DecOaks)],
                           z = ResidOaks[, 1], method = "Moran", breaks = Breaks)
 plot(MoranOaks)
 ```
+
+
 
 ```{r Quartz, cache = TRUE, warning = FALSE, eval = FALSE}
 Quartz <- Quartz[nrow(Quartz):1, ]
@@ -628,6 +633,8 @@ Inits <- setInitsQuartz(Seed = sample(73, Nchains), Length = Nchains, K = 1000)
 Threads <- 3
 Sys.setenv(STAN_NUM_THREADS = Threads)
 BrmQuartz <- brm(Quartz | weights(Weight) ~ gp(Age, k = 1000, c = 5/4), 
+                 # Beta-distribution for proportions without knowing the denominator 
+                 # (i.e. the total area )
                  family = Beta(),
                  data = Quartz,
                  inits = Inits,
@@ -637,15 +644,21 @@ BrmQuartz <- brm(Quartz | weights(Weight) ~ gp(Age, k = 1000, c = 5/4),
                  control = list(adapt_delta = 0.9, max_treedepth = 10))
 summary(BrmQuartz)
 PredQuartz <- predict(BrmQuartz, newdata = NewData)
+```
+
+
+```{r residQuartz, cache = TRUE, warning = FALSE, eval = FALSE}
 ResidQuartz <- residuals(BrmQuartz, method = "posterior_predict")
 MoranQuartz <- correlogFork(time = Quartz$Age[!is.na(Quartz$Quartz)],
                             z = ResidQuartz[, 1], method = "Moran", breaks = Breaks)
 plot(MoranQuartz)
 ```
 
+
+
 The Gaussian process modelling of Potassium has been performed on a computer with 64 GB of RAM. For less beefy machine, either increase Mid to 101 or use only one core and one chain.
 
-```{r CaK, cache = TRUE, warning = FALSE, eval = FALSE}
+```{r runingMeanK, cache = TRUE, warning = FALSE, eval = TRUE}
 CaK <- CaK[nrow(CaK):1, ]
 # Due to memory constraints, we used 21 point running mean instead of the 170,000 raw values
 # Get the upper and lower index of the range to calculate the rolling means
@@ -671,22 +684,45 @@ Sel <- seq(1, nrow(CaK), by = Mid)
 CaKSel <- CaK[Sel, ]
 # Assign weights
 CaKSel$Weight <- getWeight(CaKSel$Age)
+```
 
 
+```{r K, cache = TRUE, warning = FALSE, eval = TRUE}
 Nchains <- 4
 Ncores <- 4
+# No within-chain parallelization because this is the only time 
+# where it is not improving the speed of the smoothening.
 Inits <- setInitsK(Seed = sample(73, Nchains), Length = Nchains, K = 4000)
+# Response:
+#   KRunMean: 21-point running mean of Potassium counts
+#   + weights(Weight): Observational weights per Potassium sample (time captured by each sample); 
+#                      accounts for heteroskedasticity (Simpson, 2018)
+#   + se(KRunMeanSE, sigma = TRUE): Calculated standard error of 21-point running mean; 
+#                                   sigma = TRUE to model sigma in addition to the known standard errors
+#   + trunc(lb = 0): Truncated data distribution with lower boundary (lb) of 0.
+# Predictor:
+# ~ gp(Age, k = 400, c = 5/4, gr = FALSE): Gaussian process smoothing of age of the Potassium sample
 BrmK <- brm(KRunMean | weights(Weight) + se(KRunMeanSE, sigma = TRUE) + trunc(lb = 0) ~ 
               gp(Age, k = 4000, c = 5/4),
             data = CaKSel,
-            family = gaussian(),
+            family = gaussian(), # Normal distribution but truncated at lower boundary of 0.
             inits = Inits,
-            chains = Nchains, cores = Ncores,
+            chains = Nchains, 
+            cores = Ncores,
             iter = 2000, warmup = 1000, thin = 1, refresh = 0,
             backend = "cmdstanr",
             control = list(adapt_delta = 0.9, max_treedepth = 15))
+
+# Summarize posterior distribution of parameters and evaluate convergence through Rhat and ESS
 summary(BrmK)
-PredK <- predict(BrmK, newdata = NewData)
+# Get smoothed values of Potassium for the same moments in time where we have a diatom assemblage.
+NewDataK <- data.frame(Age = Comm$Age,
+                      KRunMeanSE = mean(CaKSel$KRunMeanSE))
+PredK <- predict(BrmK, newdata = NewDataK)
+```
+
+
+```{r residK, cache = TRUE, warning = FALSE, eval = FALSE}
 ResidK <- residuals(BrmK, method = "posterior_predict")
 MoranK <- correlogFork(time = CaKSel$Age[!is.na(CaKSel$CaRunMean)],
                           z = ResidK[, 1], method = "Moran", breaks = Breaks)
@@ -713,11 +749,16 @@ BrmIso <- brm(Lakewater | weights(Weight) ~ gp(Age, k = 600, c = 5/4, gr = FALSE
               control = list(adapt_delta = 0.8, max_treedepth = 10))
 summary(BrmIso)
 PredIso <- predict(BrmIso, newdata = NewData)
+```
+
+
+```{r residIsotope, cache = TRUE, warning = FALSE, eval = FALSE}
 ResidIso <- residuals(BrmIso, method = "posterior_predict")
 MoranIso <- correlogFork(time = Isotope$Age[!is.na(Isotope$Lakewater)],
                          z = ResidIso[, 1], method = "Moran", breaks = Breaks)
 plot(MoranIso)
 ```
+
 
 
 ```{r Tic, cache = TRUE, warning = FALSE, eval = FALSE}
@@ -730,6 +771,8 @@ Nchains <- 4
 Ncores <- 4
 Inits <- setInitsTic(Seed = sample(73, Nchains), Length = Nchains, K = 2000)
 BrmTic <- brm(TIC | weights(Weight) ~ gp(Age, k = 2000, c = 5/4), 
+              # Beta-distribution for proportions without knowing the denominator 
+              # (i.e. the total weight of the wet sample)
               family = Beta(),
               data = TicToc,
               inits = Inits,
@@ -739,11 +782,16 @@ BrmTic <- brm(TIC | weights(Weight) ~ gp(Age, k = 2000, c = 5/4),
               control = list(adapt_delta = 0.9, max_treedepth = 15))
 summary(BrmTic)
 PredTic <- predict(BrmTic, newdata = NewData)
+```
+
+
+```{r residTic, cache = TRUE, warning = FALSE, eval = FALSE}
 ResidTic <- residuals(BrmTic, method = "posterior_predict")
 MoranTic <- correlogFork(time = TicToc$Age[!is.na(TicToc$TIC)],
                           z = ResidTic[, 1], method = "Moran", breaks = Breaks)
 plot(MoranTic)
 ```
+
 
 
 ```{r Toc, cache = TRUE, warning = FALSE, eval = FALSE}
@@ -753,7 +801,7 @@ Nchains <- 4
 Ncores <- 4
 Inits <- setInitsTic(Seed = sample(73, Nchains), Length = Nchains, K = 2000)
 BrmToc <- brm(TOC | weights(Weight) ~ gp(Age, k = 2000, c = 5/4), 
-              family = Beta(),
+              family = Beta(), 
               data = TicToc,
               inits = Inits,
               cores = Ncores, chains = Nchains,
@@ -762,11 +810,17 @@ BrmToc <- brm(TOC | weights(Weight) ~ gp(Age, k = 2000, c = 5/4),
               control = list(adapt_delta = 0.9, max_treedepth = 15))
 summary(BrmToc)
 PredToc <- predict(BrmToc, newdata = NewData)
+```
+
+
+```{r residToc, cache = TRUE, warning = FALSE, eval = FALSE}
 ResidToc <- residuals(BrmTic, method = "posterior_predict")
 MoranToc <- correlogFork(time = TicToc$Age[!is.na(TicToc$TOC)],
                           z = ResidToc[, 1], method = "Moran", breaks = Breaks)
 plot(MoranToc)
 ```
+
+
 
 Multivariate grain size composition was modelled in brms using the dirichlet distribution. We obtained the temporal trend by summarizing the model-predicted grain-size composition via the first principle component of the  isometric logarithmic ratio-transformed data using the R packages robCompositions 2.3.1 (Filzmoser et al., 2018).
 
@@ -788,6 +842,7 @@ while (Nsuccess < Nchains) {
   BrmGrainsize <- brm(bind(y1, y2, y3, y4, y5, y6, y7) | weights(Weight) ~ 
                         gp(Age, k = 10, c = 5/4, gr = FALSE),
                       data = DataGrainsize,
+                      # Dirichlet distribution for proportions summing up to 1
                       family = dirichlet(),
                       chains = 1, cores = 1,
                       iter = 2000, warmup = 1000, thin = 1, refresh = 0,
@@ -997,7 +1052,7 @@ FitMpd <- brm(MpdRegr,
 summary(FitMpd)
 ```
 
-Calculate partial $R^{2}$ of the effects of shifts, time and environment by subtracting from the $R^{2}$ of the full model including all predictors (i.e. `r FitMpd`) the $R^{2}$ of a model without shifts (i.e. `r MpdNoShiftRegr`), without the linear relationship with time (i.e. `r MpdNoTimeRegr`), and without environmental predictors (i.e. `r MpdNoEnvRegr`).
+Calculate partial $R^{2}$ of the effects of shifts, time and environment by subtracting from the $R^{2}$ of the full model including all predictors (i.e. `r, eval = FALSE FitMpd`) the $R^{2}$ of a model without shifts (i.e. `r, eval = FALSE MpdNoShiftRegr`), without the linear relationship with time (i.e. `r, eval = FALSE MpdNoTimeRegr`), and without environmental predictors (i.e. `r, eval = FALSE MpdNoEnvRegr`).
 
 The model without shifts.
 
@@ -1407,7 +1462,7 @@ The results of the MPD regression could depend on the values that we used to ini
 The effect of time and environmental predictors on mean phylogenetic community structure (MPD) was initialized with random values drawn from a uniform distribution $\sim [-0.1, 0.1]$, where zero represents no effect of the predictor.
 Likewise, the change in MPD at six different shift-points was initialized $\mathcal{U} \sim [-0.1, 0.1]$. 
 We cannot initialize all Markov chains with zero because this precludes assessing the convergence of the analysis but the highest posterior density interval (HPD) of the model coefficients should include zero if there is no effect of time and environmental predictors on MPD or no shift in MPD.
-However, independent of the magnitude of a shift, its age cannot be inferred as being zero because (by model specification) shift S<sub>i + 1</sub> is always older than shift S<sub>i</sub> and thus only a single shift could have an age of zero (i.e. the present). Therefore, the initial values for the age of the shifts may influence the results of the regression analysis. Because we already obtained an idea for the ages of the shifts in MPD from the change point analysis (see function `r ecp`), we did not used a uniform distribution of initial ages. Instead, we draw these values from a dirichlet distribution that approximates the ages from the change point analysis but allow for range of initial ages of the shifts that are wider than the periods of distinct MPD separated by shifts. Again, the reason for not using the ages of the change point analysis as fixed factor in the regression analysis is that by including the effect of time and environmental predictors on MPD, the age of a shift could be different than in the change point analysis without these effects.
+However, independent of the magnitude of a shift, its age cannot be inferred as being zero because (by model specification) shift S<sub>i + 1</sub> is always older than shift S<sub>i</sub> and thus only a single shift could have an age of zero (i.e. the present). Therefore, the initial values for the age of the shifts may influence the results of the regression analysis. Because we already obtained an idea for the ages of the shifts in MPD from the change point analysis (see function `r, eval = FALSE ecp()`), we did not used a uniform distribution of initial ages. Instead, we draw these values from a dirichlet distribution that approximates the ages from the change point analysis but allow for range of initial ages of the shifts that are wider than the periods of distinct MPD separated by shifts. Again, the reason for not using the ages of the change point analysis as fixed factor in the regression analysis is that by including the effect of time and environmental predictors on MPD, the age of a shift could be different than in the change point analysis without these effects.
 
 ```{r, eval = FALSE}
 # One million draws from the dirichlet distribution with parameter alpha
@@ -1487,13 +1542,12 @@ legend("topleft", legend = c("Potential initial age MPD shift 1",
        bty = "n", col = c(ColShift, ColShift), lty = c(rep(1, 6), rep(2, 6)))
 ```
 
-Plot showing the initial age for the shifts (dashed lines) in phylogenetic community structure (MPD) from which the sampling in the regression analysis started (see function `r brm` above). We sampled from four Markov chains and therefore there are four different initial ages per shift. Same type of dashed lines display the initial ages per Markov chain. Solid lines display the distribution of which initial ages for the shifts are possible according to the dirichlet distribution with $\alpha \sim [1, 1, 2, 2, 5, 5, 20]$. Note that the range of each potential initial age is covering several periods of distinct MPD's that we identified in the change point analysis (see function `r ecp` above). Thus, the used initial ages did not constrain the regression analysis of MPD.
-
+Plot showing the initial age for the shifts (dashed lines) in phylogenetic community structure (MPD) from which the sampling in the regression analysis started (see function `r, eval = FALSE brm()` above). We sampled from four Markov chains and therefore there are four different initial ages per shift. Same type of dashed lines display the initial ages per Markov chain. Solid lines display the distribution of which initial ages for the shifts are possible according to the dirichlet distribution with $\alpha \sim [1, 1, 2, 2, 5, 5, 20]$. Note that the range of each potential initial age is covering several periods of distinct MPD's that we identified in the change point analysis (see function `r, eval = FALSE ecp()` above). Thus, the used initial ages did not constrain the regression analysis of MPD.
 
 ### Effect of prior choice on the posterior distribution
 
 In general, we specified diffuse to weakly informative priors because completely flat priors (i.e. uniform) preclude convergence of the MPD regression.
-To demonstrate the minor influence of the priors, we plot the obtained posterior distribution of the regression parameters (i.e. for the effect of time and environmental predictors, magnitude of the shift in MPD and the age of the shifts) and the prior values of the respective parameter that has been used in the analysis. This means we do not plot the prior distribution as it is defined by its parameters (e.g. the mean and variance) but the actual values drawn in the analysis. We have used the argument `r sample_prior = TRUE` of the `r brm` function to obtain the prior values.
+To demonstrate the minor influence of the priors, we plot the obtained posterior distribution of the regression parameters (i.e. for the effect of time and environmental predictors, magnitude of the shift in MPD and the age of the shifts) and the prior values of the respective parameter that has been used in the analysis. This means we do not plot the prior distribution as it is defined by its parameters (e.g. the mean and variance) but the actual values drawn in the analysis. We have used the argument `r, eval = FALSE sample_prior = TRUE` of the `r, eval = FALSE brm()` function to obtain the prior values.
 
 ```{r FigureS3, cache = TRUE, warning = FALSE, fig.width = 10, fig.height = 9, eval = FALSE}
 # Get prior draws from the regression analysis

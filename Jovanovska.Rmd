@@ -592,7 +592,7 @@ plot(MoranAP) # Red dot indicates significant autocorrelation
 
 
 
-```{r Oaks, cache = TRUE, warning = FALSE, eval = FALSE}
+```{r Oaks, cache = TRUE, warning = FALSE, eval = TRUE}
 PriorOaks <- c(prior(normal(0, 1), class = Intercept), 
              prior(inv_gamma(1.494197, 0.056607), class = lscale, coef = "gpAge"),
              prior(normal(0, 2), class = sdgp))
@@ -615,7 +615,7 @@ PredOaks <- predict(BrmOaks, newdata = NewData)
 ```
 
 
-```{r residOaks, cache = TRUE, warning = FALSE, eval = FALSE}
+```{r residOaks, cache = TRUE, warning = FALSE, eval = TRUE}
 ResidOaks <- residuals(BrmOaks, method = "posterior_predict")
 MoranOaks <- correlogFork(time = Pollen$Age[!is.na(Pollen$DecOaks)],
                           z = ResidOaks[, 1], method = "Moran", breaks = Breaks)
@@ -624,7 +624,7 @@ plot(MoranOaks)
 
 
 
-```{r Quartz, cache = TRUE, warning = FALSE, eval = FALSE}
+```{r Quartz, cache = TRUE, warning = FALSE, eval = TRUE}
 Quartz <- Quartz[nrow(Quartz):1, ]
 Quartz$Weight <- getWeight(Quartz$Age)
 Nchains <- 4
@@ -647,13 +647,102 @@ PredQuartz <- predict(BrmQuartz, newdata = NewData)
 ```
 
 
-```{r residQuartz, cache = TRUE, warning = FALSE, eval = FALSE}
+```{r residQuartz, cache = TRUE, warning = FALSE, eval = TRUE}
 ResidQuartz <- residuals(BrmQuartz, method = "posterior_predict")
 MoranQuartz <- correlogFork(time = Quartz$Age[!is.na(Quartz$Quartz)],
                             z = ResidQuartz[, 1], method = "Moran", breaks = Breaks)
 plot(MoranQuartz)
 ```
 
+
+```{r Tic, cache = TRUE, warning = FALSE, eval = TRUE}
+TicToc <- TicToc[nrow(TicToc ):1, ]
+TicToc$Weight <- getWeight(TicToc$Age)
+
+Threads <- 3
+Sys.setenv(STAN_NUM_THREADS = Threads)
+Nchains <- 4
+Ncores <- 4
+Inits <- setInitsTic(Seed = sample(73, Nchains), Length = Nchains, K = 2000)
+BrmTic <- brm(TIC | weights(Weight) ~ gp(Age, k = 2000, c = 5/4), 
+              # Beta-distribution for proportions without knowing the denominator 
+              # (i.e. the total weight of the wet sample)
+              family = Beta(),
+              data = TicToc,
+              inits = Inits,
+              cores = Ncores, chains = Nchains,
+              iter = 3000, warmup = 1000, thin = 1, refresh = 0,
+              threads = threading(Threads), backend = "cmdstanr",
+              control = list(adapt_delta = 0.9, max_treedepth = 15))
+summary(BrmTic)
+PredTic <- predict(BrmTic, newdata = NewData)
+```
+
+
+```{r residTic, cache = TRUE, warning = FALSE, eval = TRUE}
+ResidTic <- residuals(BrmTic, method = "posterior_predict")
+MoranTic <- correlogFork(time = TicToc$Age[!is.na(TicToc$TIC)],
+                          z = ResidTic[, 1], method = "Moran", breaks = Breaks)
+plot(MoranTic)
+```
+
+
+
+```{r Toc, cache = TRUE, warning = FALSE, eval = TRUE}
+Threads <- 3
+Sys.setenv(STAN_NUM_THREADS = Threads)
+Nchains <- 4
+Ncores <- 4
+Inits <- setInitsTic(Seed = sample(73, Nchains), Length = Nchains, K = 2000)
+BrmToc <- brm(TOC | weights(Weight) ~ gp(Age, k = 2000, c = 5/4), 
+              family = Beta(), 
+              data = TicToc,
+              inits = Inits,
+              cores = Ncores, chains = Nchains,
+              iter = 3000, warmup = 1000, thin = 1, refresh = 0,
+              threads = threading(Threads), backend = "cmdstanr",
+              control = list(adapt_delta = 0.9, max_treedepth = 15))
+summary(BrmToc)
+PredToc <- predict(BrmToc, newdata = NewData)
+```
+
+
+```{r residToc, cache = TRUE, warning = FALSE, eval = TRUE}
+ResidToc <- residuals(BrmTic, method = "posterior_predict")
+MoranToc <- correlogFork(time = TicToc$Age[!is.na(TicToc$TOC)],
+                          z = ResidToc[, 1], method = "Moran", breaks = Breaks)
+plot(MoranToc)
+```
+
+
+```{r Isotope, cache = TRUE, warning = FALSE, eval = TRUE}
+Isotope <- Isotope[nrow(Isotope):1, ]
+Isotope$Weight <- getWeight(Isotope$Age)
+
+Nchains <- 4
+Ncores <- 4
+Threads <- 3
+Sys.setenv(STAN_NUM_THREADS = Threads)
+Inits <- setInitsIsotope(Seed = sample(73, Nchains), Length = Nchains, K = 600)
+BrmIso <- brm(Lakewater | weights(Weight) ~ gp(Age, k = 600, c = 5/4, gr = FALSE),
+              data = Isotope,
+              init = Inits,
+              family = gaussian(),
+              chains = Nchains, cores = Ncores,
+              iter = 2000, warmup = 1000, thin = 1, refresh = 0,
+              threads = threading(Threads), backend = "cmdstanr",
+              control = list(adapt_delta = 0.8, max_treedepth = 10))
+summary(BrmIso)
+PredIso <- predict(BrmIso, newdata = NewData)
+```
+
+
+```{r residIsotope, cache = TRUE, warning = FALSE, eval = TRUE}
+ResidIso <- residuals(BrmIso, method = "posterior_predict")
+MoranIso <- correlogFork(time = Isotope$Age[!is.na(Isotope$Lakewater)],
+                         z = ResidIso[, 1], method = "Moran", breaks = Breaks)
+plot(MoranIso)
+```
 
 
 The Gaussian process modelling of Potassium has been performed on a computer with 64 GB of RAM. For less beefy machine, either increase Mid to 101 or use only one core and one chain.
@@ -722,144 +811,81 @@ PredK <- predict(BrmK, newdata = NewDataK)
 ```
 
 
-```{r residK, cache = TRUE, warning = FALSE, eval = FALSE}
+```{r residK, cache = TRUE, warning = FALSE, eval = TRUE}
 ResidK <- residuals(BrmK, method = "posterior_predict")
-MoranK <- correlogFork(time = CaKSel$Age[!is.na(CaKSel$CaRunMean)],
+MoranK <- correlogFork(time = CaKSel$Age[!is.na(CaKSel$KRunMean)],
                           z = ResidK[, 1], method = "Moran", breaks = Breaks)
 plot(MoranK)
 ```
 
 
-```{r Isotope, cache = TRUE, warning = FALSE, eval = FALSE}
-Isotope <- Isotope[nrow(Isotope):1, ]
-Isotope$Weight <- getWeight(Isotope$Age)
-
-Nchains <- 4
-Ncores <- 4
-Threads <- 3
-Sys.setenv(STAN_NUM_THREADS = Threads)
-Inits <- setInitsIsotope(Seed = sample(73, Nchains), Length = Nchains, K = 600)
-BrmIso <- brm(Lakewater | weights(Weight) ~ gp(Age, k = 600, c = 5/4, gr = FALSE),
-              data = Isotope,
-              init = Inits,
-              family = gaussian(),
-              chains = Nchains, cores = Ncores,
-              iter = 2000, warmup = 1000, thin = 1, refresh = 0,
-              threads = threading(Threads), backend = "cmdstanr",
-              control = list(adapt_delta = 0.8, max_treedepth = 10))
-summary(BrmIso)
-PredIso <- predict(BrmIso, newdata = NewData)
-```
-
-
-```{r residIsotope, cache = TRUE, warning = FALSE, eval = FALSE}
-ResidIso <- residuals(BrmIso, method = "posterior_predict")
-MoranIso <- correlogFork(time = Isotope$Age[!is.na(Isotope$Lakewater)],
-                         z = ResidIso[, 1], method = "Moran", breaks = Breaks)
-plot(MoranIso)
-```
-
-
-
-```{r Tic, cache = TRUE, warning = FALSE, eval = FALSE}
-TicToc <- TicToc[nrow(TicToc ):1, ]
-TicToc$Weight <- getWeight(TicToc$Age)
-
-Threads <- 3
-Sys.setenv(STAN_NUM_THREADS = Threads)
-Nchains <- 4
-Ncores <- 4
-Inits <- setInitsTic(Seed = sample(73, Nchains), Length = Nchains, K = 2000)
-BrmTic <- brm(TIC | weights(Weight) ~ gp(Age, k = 2000, c = 5/4), 
-              # Beta-distribution for proportions without knowing the denominator 
-              # (i.e. the total weight of the wet sample)
-              family = Beta(),
-              data = TicToc,
-              inits = Inits,
-              cores = Ncores, chains = Nchains,
-              iter = 3000, warmup = 1000, thin = 1, refresh = 0,
-              threads = threading(Threads), backend = "cmdstanr",
-              control = list(adapt_delta = 0.9, max_treedepth = 15))
-summary(BrmTic)
-PredTic <- predict(BrmTic, newdata = NewData)
-```
-
-
-```{r residTic, cache = TRUE, warning = FALSE, eval = FALSE}
-ResidTic <- residuals(BrmTic, method = "posterior_predict")
-MoranTic <- correlogFork(time = TicToc$Age[!is.na(TicToc$TIC)],
-                          z = ResidTic[, 1], method = "Moran", breaks = Breaks)
-plot(MoranTic)
-```
-
-
-
-```{r Toc, cache = TRUE, warning = FALSE, eval = FALSE}
-Threads <- 3
-Sys.setenv(STAN_NUM_THREADS = Threads)
-Nchains <- 4
-Ncores <- 4
-Inits <- setInitsTic(Seed = sample(73, Nchains), Length = Nchains, K = 2000)
-BrmToc <- brm(TOC | weights(Weight) ~ gp(Age, k = 2000, c = 5/4), 
-              family = Beta(), 
-              data = TicToc,
-              inits = Inits,
-              cores = Ncores, chains = Nchains,
-              iter = 3000, warmup = 1000, thin = 1, refresh = 0,
-              threads = threading(Threads), backend = "cmdstanr",
-              control = list(adapt_delta = 0.9, max_treedepth = 15))
-summary(BrmToc)
-PredToc <- predict(BrmToc, newdata = NewData)
-```
-
-
-```{r residToc, cache = TRUE, warning = FALSE, eval = FALSE}
-ResidToc <- residuals(BrmTic, method = "posterior_predict")
-MoranToc <- correlogFork(time = TicToc$Age[!is.na(TicToc$TOC)],
-                          z = ResidToc[, 1], method = "Moran", breaks = Breaks)
-plot(MoranToc)
-```
-
-
-
 Multivariate grain size composition was modelled in brms using the dirichlet distribution. We obtained the temporal trend by summarizing the model-predicted grain-size composition via the first principle component of the  isometric logarithmic ratio-transformed data using the R packages robCompositions 2.3.1 (Filzmoser et al., 2018).
 
-```{r GrainSize, cache = TRUE, warning = FALSE, eval = FALSE}
+```{r GrainSize, cache = TRUE, warning = FALSE, eval = TRUE}
+# Transfer the grainsizes to another data.frame
 DataGrainsize <- Grainsize[, c("SAND","VERY_COARSE_SILT", "COARSE_SILT", "MEDIUM_SILT", 
                                "FINE_SILT", "VERY_FINE_SILT", "CLAY")]
+# Rename the columns with grainsizes to y1...y7
 colnames(DataGrainsize) <- c("y1", "y2", "y3", "y4", "y5", "y6", "y7")
-DataGrainsize <- DataGrainsize / rowSums(DataGrainsize) # At all times the sum is 1
+ # At all times the sum is 1
+DataGrainsize <- DataGrainsize / rowSums(DataGrainsize)
+ # Add the age of the samples
 DataGrainsize$Age <- Grainsize$Age
+# Assign weights
 DataGrainsize$Weight <- getWeight(DataGrainsize$Age)
-# Some inits fail but no way to set inits as list
+# Some inits fail but no way to set inits as list as with the other paleoenvironmental predictors
+ # Number of chains
 Nchains <- 4
+ # Run only chain at a time
 Ncores <- 1
+ # within-chain parallelization on 6 cores
 Threads <- 6
 Sys.setenv(STAN_NUM_THREADS = Threads)
+# Create empty list where we safe converged chains
 BrmGrainsizeList <- vector(mode = "list") 
+# We start with a counter of zero successful attempts
 Nsuccess <- 0
+# Do while we have less successful attempts than desired chains
 while (Nsuccess < Nchains) {
+  # Response: 
+  #   bind(y1, y2, y3, y4, y5, y6, y7): multivariate grainsize distribution
+  #   + weights(Weight): Observational weights per grainsize sample (time captured by each sample); 
+  #                      accounts for heteroskedasticity (Simpson, 2018) 
+  # Predictor:
+  # ~ gp(Age, k = 10, c = 5/4, gr = FALSE): Gaussian process smoothing of age of the grainsize sample
   BrmGrainsize <- brm(bind(y1, y2, y3, y4, y5, y6, y7) | weights(Weight) ~ 
                         gp(Age, k = 10, c = 5/4, gr = FALSE),
                       data = DataGrainsize,
                       # Dirichlet distribution for proportions summing up to 1
                       family = dirichlet(),
                       chains = 1, cores = 1,
-                      iter = 2000, warmup = 1000, thin = 1, refresh = 0,
+                      iter = 4000, warmup = 3000, thin = 1, refresh = 0,
                       threads = threading(Threads), backend = "cmdstanr",
-                      control = list(adapt_delta = 0.95, max_treedepth = 15))
+                      control = list(adapt_delta = 0.99, max_treedepth = 18))
   SummaryBrmGrainsize <- summary(BrmGrainsize)
+  # Check if attempt converged
   Converged <- all(c(SummaryBrmGrainsize$fixed[, "Rhat"] < 1.05, SummaryBrmGrainsize$gp[, "Rhat"] < 1.05))
   if (Converged) {
+    # Increas success counter by 1; stop the while-loop if successes equals the desired number of chains
     Nsuccess <- Nsuccess + 1
+    # Add attempt to the list of successful attempts (i.e. 4 at the end)
+    BrmGrainsizeList[[Nsuccess]] <- BrmGrainsize
   }
-  BrmGrainsizeList[[Nsuccess]] <- BrmGrainsize
 }
+# Convert list with successful attempts to brms fit
 BrmGrainsize <- combine_models(mlist = BrmGrainsizeList)
+
+# Summarize posterior distribution of parameters and evaluate convergence through Rhat and ESS
 summary(BrmGrainsize)
+
+# Get smoothed values of grainsizes for the same moments in time where we have a diatom assemblage.
 PredGrainsize <- predict(BrmGrainsize, newdata = NewData)
+
+# Robust principle component analysis for predicted grainsize composition
+# (i.e. individual proportions summing up to 1)
 GrainsizePca <- pcaCoDa(PredGrainsize[, 1, ])
-# Explained variances
+
+# See how much variance is explained by the first axis of the PCA
 GrainsizePca$princompOutputClr$sdev^2 / sum(GrainsizePca$princompOutputClr$sdev^2) 
 GrainsizePca <- GrainsizePca$scores
 ```
@@ -899,7 +925,7 @@ MedstackComm <- approx(x = -Medstack$Age, y = Medstack$d18Ostack, xout = Comm$Ag
 
 We excluded colinear predictors for the analysis of phylogenetic community structure and retained the following predictors: grain size, insolation, isotope composition, potassium, Medstack, deciduous oaks and TOC.
 
-```{r DataMpdRegr, cache = TRUE, warning = FALSE, eval = FALSE}
+```{r DataMpdRegr, cache = TRUE, warning = FALSE, eval = TRUE}
 # Grainsize PCA may vary between MCMC runs
 # Low values should always indicate a small lake
 if (GrainsizePca[1, 1] < GrainsizePca[nrow(GrainsizePca), 1]) {

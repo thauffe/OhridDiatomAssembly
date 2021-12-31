@@ -497,6 +497,16 @@ setInitsRegr <- function (Seed, Length) {
     # brms:::inv_logit(cumDiff(c(RanS6, NewRanS5, NewRanS4, NewRanS3, NewRanS2, NewRanS1)))*1364.7
     # One list for each chain with initial values for all model parameters
     InitList[[i]] <- list(
+      # Effect of the environmental and climatic predictors,
+      # uniform distribution specifying a relatively small initial effect [-0.1, 0.1]
+      "b_bGrain" = array(runif(n = 1, min = -0.1, max = 0.1)),
+      "b_bIns" = array(runif(n = 1, min = -0.1, max = 0.1)),
+      "b_bK" = array(runif(n = 1, min = -0.1, max = 0.1)),
+      "b_bOaks" = array(runif(n = 1, min = -0.1, max = 0.1)),
+      "b_bToc" = array(runif(n = 1, min = -0.1, max = 0.1)),
+      "b_bIso" = array(runif(n = 1, min = -0.1, max = 0.1)),
+      "b_bMed" = array(runif(n = 1, min = -0.1, max = 0.1)),
+      "b_bAge" = array(runif(n = 1, min = -0.1, max = 0.1)),
       # Effect of the shift, uniform distribution specifying a relatively small effect [-0.1, 0.1]
       "b_bS1" = array(runif(n = 1, min = -0.1, max = 0.1)), 
       "b_bS2" = array(runif(n = 1, min = -0.1, max = 0.1)),
@@ -505,16 +515,6 @@ setInitsRegr <- function (Seed, Length) {
       "b_bS5" = array(runif(n = 1, min = -0.1, max = 0.1)),
       "b_bS6" = array(runif(n = 1, min = -0.1, max = 0.1)),
       "b_bS7" = array(runif(n = 1, min = -0.1, max = 0.1)),
-      # Effect of the environmental and climatic predictors,
-      # uniform distribution specifying a relatively small effect [-0.1, 0.1]
-      "b_bAge" = array(runif(n = 1, min = -0.1, max = 0.1)),
-      "b_bGrain" = array(runif(n = 1, min = -0.1, max = 0.1)),
-      "b_bIns" = array(runif(n = 1, min = -0.1, max = 0.1)),
-      "b_bIso" = array(runif(n = 1, min = -0.1, max = 0.1)),
-      "b_bK" = array(runif(n = 1, min = -0.1, max = 0.1)),
-      "b_bMed" = array(runif(n = 1, min = -0.1, max = 0.1)),
-      "b_bOaks" = array(runif(n = 1, min = -0.1, max = 0.1)),
-      "b_bToc" = array(runif(n = 1, min = -0.1, max = 0.1)),
       "b_S1" = array(NewRanS1),
       "b_S2" = array(NewRanS2),
       "b_S3" = array(NewRanS3),
